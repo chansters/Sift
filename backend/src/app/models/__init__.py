@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, TypeDecorator
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, TypeDecorator
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -89,6 +89,10 @@ class Feed(Base):
     # First-poll backfill window in days; NULL = follow settings.feed_backfill_days,
     # 0 = import everything (SPEC §9)
     backfill_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Mail feeds only: count of newsletter emails processed for this sender
+    # (incremented once per message in _process_message, regardless of how many
+    # links it yielded) — lets admins spot a stalled/broken newsletter feed.
+    email_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     articles: Mapped[list["Article"]] = relationship(back_populates="feed")
@@ -102,6 +106,36 @@ class Category(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class CategorySuggestion(Base):
+    """One LLM-proposed new category, logged per-article (never auto-applied).
+
+    Written from services/process.py::summarize_article when the model feels
+    none of the current taxonomy categories fit well (services/prompts.py).
+    No FK to article — append-only audit log, same pattern as LLMUsage/
+    ChatMessage, so a suggestion survives article retention. Aggregated by
+    services/category_suggestions.py into admin-facing proposals.
+    """
+
+    __tablename__ = "category_suggestion"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_id: Mapped[int] = mapped_column(Integer)
+    raw_text: Mapped[str] = mapped_column(String(128))
+    # Lowercased/punctuation-stripped raw_text — groups exact-ish duplicates
+    # ("Apple", "apple.", " Apple ") without semantic (embedding) clustering.
+    normalized_text: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class CategoryProposalDismissal(Base):
+    """An admin-dismissed suggestion cluster — suppressed from future proposals."""
+
+    __tablename__ = "category_proposal_dismissal"
+
+    normalized_text: Mapped[str] = mapped_column(String(128), primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 # Seeded at first migration; fully editable afterwards.
@@ -137,6 +171,7 @@ class Story(Base):
     title: Mapped[str] = mapped_column(String(512), default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(128), default="Uncategorized")
+    language: Mapped[str] = mapped_column(String(8), default="")
     # Lead image: first member article that carried an RSS image (SPEC §3)
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -151,6 +186,12 @@ class Story(Base):
 
 class Article(Base):
     __tablename__ = "article"
+    # story_id sits after the large text columns, so unindexed lookups read through them
+    __table_args__ = (
+        Index("ix_article_feed_story", "feed_id", "story_id"),
+        # covering index for per-story count / date aggregates
+        Index("ix_article_story_dates", "story_id", "published_at", "fetched_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     feed_id: Mapped[int] = mapped_column(ForeignKey("feed.id"), index=True)
@@ -164,15 +205,18 @@ class Article(Base):
     language: Mapped[str] = mapped_column(String(8), default="")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Preliminary category from the headline-only classifier; Article.category
-    # remains the authoritative body-based category.
+    # Preliminary category; Article.category remains the body-based authority.
     headline_category: Mapped[str | None] = mapped_column(String(128), nullable=True)
     filter_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    story_id: Mapped[int | None] = mapped_column(ForeignKey("story.id"), nullable=True)
+    story_id: Mapped[int | None] = mapped_column(
+        ForeignKey("story.id"), nullable=True, index=True
+    )
     # Human-written intro extracted from the source newsletter (mail feeds only).
     # The LLM summary still drives embeddings/clustering (invariant 2), but a NEW
     # story created from this article shows this text instead (SPEC §4).
     newsletter_intro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Original subscription title from third-party reader API (reader_api feeds only)
+    origin_feed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # fetched → fulltext → summarized → embedded → clustered (SPEC §8)
     processing_state: Mapped[str] = mapped_column(String(32), default="fetched", index=True)
     content_status: Mapped[str] = mapped_column(String(16), default="full")
@@ -182,6 +226,16 @@ class Article(Base):
 
     feed: Mapped[Feed] = relationship(back_populates="articles")
     story: Mapped[Story | None] = relationship(back_populates="articles")
+
+
+class UserFeed(Base):
+    """Per-user feed subscription (SPEC §3, invariant 4)."""
+
+    __tablename__ = "user_feed"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), primary_key=True)
+    feed_id: Mapped[int] = mapped_column(ForeignKey("feed.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 class StoryState(Base):
@@ -194,6 +248,7 @@ class StoryState(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     read_at_version: Mapped[int] = mapped_column(Integer, default=0)
     read_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    saved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class StoryRevision(Base):
@@ -202,6 +257,19 @@ class StoryRevision(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("story.id"), index=True)
     version: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class StoryTranslation(Base):
+    """Cached translations of story title and summary into non-default user languages."""
+
+    __tablename__ = "story_translation"
+
+    story_id: Mapped[int] = mapped_column(ForeignKey("story.id"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(8), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(512))
     summary: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
@@ -269,6 +337,39 @@ class MailAccount(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # IMAP UID watermark — only messages with UID > last_uid are processed
     last_uid: Mapped[int] = mapped_column(Integer, default=0)
+    last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class ReaderAccount(Base):
+    """Per-user third-party RSS reader API account (SPEC §9 reader ingestion).
+
+    Compatible with Google Reader API (/reader/api/0) providers:
+    Inoreader, FreshRSS, Miniflux, The Old Reader, BazQux, etc.
+    All items pulled from this account are grouped under a single virtual Feed
+    (feed.kind == 'reader_api').
+    """
+
+    __tablename__ = "reader_account"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="greader")
+    title: Mapped[str] = mapped_column(String(256), default="")
+    api_base_url: Mapped[str] = mapped_column(String(1024))
+    username: Mapped[str] = mapped_column(String(256), default="")
+    password: Mapped[str] = mapped_column(String(512), default="")
+    auth_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    virtual_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feed.id"), nullable=True)
+    sync_cursor: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Unread articles to import on the first sync (later syncs are unbounded)
+    initial_import_count: Mapped[int] = mapped_column(Integer, default=200, server_default="200")
+    # Epoch seconds of the newest item ingested by the service; NULL until the first sync
+    sync_checkpoint: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Import window in days; NULL = follow settings.feed_backfill_days, 0 = everything
+    backfill_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

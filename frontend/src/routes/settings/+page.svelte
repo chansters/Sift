@@ -3,13 +3,14 @@
   import { goto } from '$app/navigation';
   import { api, getToken } from '$lib/api';
   import { currentUser } from '$lib/stores';
-  import type { Category, MailAccount, ManagedUser } from '$lib/types';
+  import type { Category, CategorySuggestion, MailAccount, ManagedUser, ReaderAccount } from '$lib/types';
 
   let language = $state('');
   let categoryInterests = $state<string[]>([]);
   let saved = $state(false);
   let categories = $state<Category[]>([]);
   let newCategory = $state('');
+  let suggestions = $state<CategorySuggestion[]>([]);
   let users = $state<ManagedUser[]>([]);
   let newUsername = $state('');
   let newUserPassword = $state('');
@@ -69,6 +70,35 @@
   let editFolder = $state('');
   let editSsl = $state(true);
   let mailSaving = $state(false);
+
+  // Third-party RSS Reader accounts (Google Reader API standard)
+  let readerAccounts = $state<ReaderAccount[]>([]);
+  let readerTitle = $state('');
+  let readerBaseUrl = $state('https://www.inoreader.com');
+  let readerUsername = $state('');
+  let readerPassword = $state('');
+  let readerError = $state('');
+  let readerAdding = $state(false);
+  let readerTest = $state<Record<number, { ok: boolean; items_accessible: number; error: string | null }>>({});
+  let readerPolling = $state<number | null>(null);
+  let readerPollInfo = $state<Record<number, string>>({});
+  let readerEditingId = $state<number | null>(null);
+  let editReaderTitle = $state('');
+  let editReaderBaseUrl = $state('');
+  let editReaderUsername = $state('');
+  let editReaderPassword = $state('');
+  let readerSaving = $state(false);
+  let readerArticles = $state(200);
+  let readerBackfill = $state<string>('');
+  let editReaderBackfill = $state<string>('');
+
+  async function loadReaderAccounts() {
+    try {
+      readerAccounts = await api.readerAccounts.list();
+    } catch {
+      readerAccounts = [];
+    }
+  }
 
   function startEditMail(a: MailAccount) {
     mailError = '';
@@ -174,6 +204,110 @@
     return d ? new Date(d).toLocaleString() : 'never';
   }
 
+  async function addReaderAccount(e: SubmitEvent) {
+    e.preventDefault();
+    readerError = '';
+    readerAdding = true;
+    try {
+      await api.readerAccounts.create({
+        provider: 'greader',
+        title: readerTitle.trim() || undefined,
+        api_base_url: readerBaseUrl.trim(),
+        username: readerUsername.trim(),
+        password: readerPassword || undefined,
+        is_enabled: true,
+        initial_import_count: Number(readerArticles),
+        backfill_days: readerBackfill === '' ? null : Number(readerBackfill)
+      });
+      readerTitle = '';
+      readerPassword = '';
+      await loadReaderAccounts();
+    } catch (err) {
+      readerError = err instanceof Error ? err.message : 'Failed to add reader account';
+    } finally {
+      readerAdding = false;
+    }
+  }
+
+  function startEditReader(a: ReaderAccount) {
+    readerError = '';
+    readerEditingId = a.id;
+    editReaderTitle = a.title ?? '';
+    editReaderBaseUrl = a.api_base_url;
+    editReaderUsername = a.username;
+    editReaderPassword = '';
+    editReaderBackfill = a.backfill_days === null ? '' : String(a.backfill_days);
+  }
+
+  async function saveReaderAccount(e: SubmitEvent) {
+    e.preventDefault();
+    if (readerEditingId === null) return;
+    readerSaving = true;
+    try {
+      await api.readerAccounts.update(readerEditingId, {
+        title: editReaderTitle.trim() || undefined,
+        api_base_url: editReaderBaseUrl.trim(),
+        username: editReaderUsername.trim(),
+        backfill_days: editReaderBackfill === '' ? null : Number(editReaderBackfill),
+        ...(editReaderPassword ? { password: editReaderPassword } : {})
+      });
+      readerEditingId = null;
+      await loadReaderAccounts();
+    } catch (err) {
+      readerError = err instanceof Error ? err.message : 'Failed to update reader account';
+    } finally {
+      readerSaving = false;
+    }
+  }
+
+  async function toggleReaderAccount(a: ReaderAccount) {
+    await api.readerAccounts.update(a.id, { is_enabled: !a.is_enabled });
+    await loadReaderAccounts();
+  }
+
+  async function removeReaderAccount(a: ReaderAccount) {
+    if (!confirm(`Delete ${a.title || a.username}? Member articles will stay in the archive.`)) return;
+    readerError = '';
+    try {
+      await api.readerAccounts.remove(a.id);
+      await loadReaderAccounts();
+    } catch (err) {
+      readerError = err instanceof Error ? err.message : 'Failed to remove account';
+    }
+  }
+
+  async function testReaderAccount(a: ReaderAccount) {
+    try {
+      const res = await api.readerAccounts.test(a.id);
+      readerTest = { ...readerTest, [a.id]: res };
+    } catch (err) {
+      readerTest = {
+        ...readerTest,
+        [a.id]: { ok: false, items_accessible: 0, error: err instanceof Error ? err.message : 'Test failed' }
+      };
+    }
+  }
+
+  async function pollReaderAccount(a: ReaderAccount) {
+    readerPolling = a.id;
+    readerPollInfo = { ...readerPollInfo, [a.id]: '' };
+    try {
+      const res = await api.readerAccounts.poll(a.id);
+      readerPollInfo = {
+        ...readerPollInfo,
+        [a.id]: `Poll completed: ${res.new_articles} new articles, ${res.read_synced} read states synced.`
+      };
+      await loadReaderAccounts();
+    } catch (err) {
+      readerPollInfo = {
+        ...readerPollInfo,
+        [a.id]: `Poll failed: ${err instanceof Error ? err.message : String(err)}`
+      };
+    } finally {
+      readerPolling = null;
+    }
+  }
+
   const feedUrl = $derived.by(() => {
     if (typeof window === 'undefined' || !feedToken) return '';
     const params = new URLSearchParams({ token: feedToken });
@@ -210,6 +344,7 @@
         { key: 'llm_api_key', label: 'LLM API key', secret: true },
         { key: 'embed_base_url', label: 'Embeddings base URL (empty = same as LLM)' },
         { key: 'embed_model', label: 'Embedding model' },
+        { key: 'llm_context_tokens', label: 'Model context window (tokens, min 2048 — default 32768; match your LLM model)' },
         { key: 'llm_trace_enabled', label: 'Live LLM trace on Activity page (1 = on, 0 = off)' },
         { key: 'llm_trace_max_chars', label: 'Trace max chars per message' }
       ]
@@ -246,6 +381,15 @@
       ]
     },
     {
+      title: 'Category suggestions',
+      hint: 'When the summarizer feels no taxonomy category fits, it may propose a new one — recurring proposals show up below the Categories card.',
+      fields: [
+        { key: 'category_suggestions_enabled', label: 'Suggestions enabled (1 = on, 0 = off)' },
+        { key: 'category_suggestion_min_articles', label: 'Distinct articles before proposing' },
+        { key: 'category_suggestion_window_days', label: 'Rolling window (days)' }
+      ]
+    },
+    {
       title: 'Clustering',
       hint: 'Tune via the feedback report below before changing thresholds.',
       fields: [
@@ -260,15 +404,23 @@
         { key: 'retention_days', label: 'Retention (days)' },
         { key: 'feed_disable_after_days', label: 'Disable feed after N days of failures' },
         { key: 'feed_backfill_days', label: 'First-poll backfill window (days, 0 = all)' },
-        { key: 'summary_language', label: 'Summary language (global default)' }
+        { key: 'reader_poll_minutes', label: 'Reader accounts poll interval (minutes)' },
+        { key: 'summary_language', label: 'Summary language (global default)' },
+        { key: 'summary_min_sentences', label: 'Story summary min sentences (1-12)' },
+        { key: 'summary_max_sentences', label: 'Story summary max sentences (1-12)' },
+        { key: 'headline_min_words', label: 'Headline min words (0 = no minimum, max 40)' },
+        { key: 'headline_max_words', label: 'Headline max words (1-40)' }
       ]
     }
   ];
 
   onMount(async () => {
     language = $currentUser?.summary_language ?? '';
-    categoryInterests = [...($currentUser?.category_interests ?? [])];
+    const interests = await api.categoryInterests.get();
+    categoryInterests = interests.category_interests;
+    categories = interests.categories.map((name, id) => ({ id, name }));
     mailAccounts = await api.mailAccounts.list();
+    await loadReaderAccounts();
     // Token for the RSS URL: prefer a fresh one from the backend (works when
     // localStorage lost it), fall back to whatever is already stored.
     try {
@@ -279,8 +431,9 @@
     // Load the taxonomy for category filters and per-user interests.
     const stories = await api.stories.list();
     feedCategories = [...new Set(stories.map((s) => s.category))].sort();
-    categories = await api.categories.list();
     if ($currentUser?.is_admin) {
+      categories = await api.categories.list();
+      suggestions = await api.categories.suggestions();
       users = await api.users.list();
       const s = await api.settings.get();
       sys = s.values;
@@ -329,7 +482,8 @@
   }
 
   async function saveLanguage() {
-    $currentUser = await api.patchMe({ summary_language: language, category_interests: categoryInterests });
+    $currentUser = await api.patchMe({ summary_language: language });
+    await api.categoryInterests.update(categoryInterests);
     saved = true;
     setTimeout(() => (saved = false), 2000);
   }
@@ -351,6 +505,17 @@
     if (!confirm(`Delete category "${c.name}"?`)) return;
     await api.categories.remove(c.id);
     categories = await api.categories.list();
+  }
+
+  async function acceptSuggestion(s: CategorySuggestion) {
+    await api.categories.acceptSuggestion(s);
+    categories = await api.categories.list();
+    suggestions = await api.categories.suggestions();
+  }
+
+  async function dismissSuggestion(s: CategorySuggestion) {
+    await api.categories.dismissSuggestion(s);
+    suggestions = await api.categories.suggestions();
   }
 
   async function addUser(e: SubmitEvent) {
@@ -579,6 +744,94 @@
   {/each}
 </div>
 
+<div class="card">
+  <h2>RSS Reader Accounts</h2>
+  <p class="hint">
+    Connect an external RSS reader service (Google Reader API standard: Inoreader, FreshRSS, Miniflux, The Old Reader, BazQux).
+    Articles are ingested into a single virtual feed with original publisher URLs, favicons, and origin titles, and read state syncs bidirectionally. Each sync fetches the newest articles first, up to the chosen number, and stops at articles already imported. The login is tested when you add the account; if it fails, the server probes common endpoints (for example one ending in /api/greader.php) and suggests the right address.
+  </p>
+  {#if readerError}<p class="bad">{readerError}</p>{/if}
+  <form class="add" onsubmit={addReaderAccount}>
+    <input bind:value={readerTitle} placeholder="Account title (optional, e.g. Inoreader)" />
+    <input bind:value={readerBaseUrl} placeholder="API URL (e.g. https://www.inoreader.com)" required />
+    <input bind:value={readerUsername} placeholder="Username / Email" required />
+    <input
+      bind:value={readerPassword}
+      type="password"
+      placeholder="Password / API token"
+      required
+    />
+    <label class="hint">
+      Articles to retrieve on first sync (1–5000, default 200). Only unread articles are
+      retrieved: anything already read in the source app is ignored. Later syncs fetch all new
+      unread articles.
+      <input bind:value={readerArticles} type="number" min="1" max="5000" />
+    </label>
+    <label class="hint">
+      Import window in days (blank = server default, 0 = everything)
+      <input bind:value={readerBackfill} type="number" min="0" max="3650" placeholder="server default" />
+    </label>
+    <button type="submit" disabled={readerAdding}>{readerAdding ? 'Adding…' : 'Add account'}</button>
+  </form>
+  {#each readerAccounts as a (a.id)}
+    <div class="mailacct">
+      {#if readerEditingId === a.id}
+        <form class="add" onsubmit={saveReaderAccount}>
+          <input bind:value={editReaderTitle} placeholder="Account title" />
+          <input bind:value={editReaderBaseUrl} placeholder="API URL" required />
+          <input bind:value={editReaderUsername} placeholder="Username / Email" required />
+          <input
+            bind:value={editReaderPassword}
+            type="password"
+            placeholder="new password / token (blank = keep current)"
+          />
+          <label class="hint">
+            Import window in days (blank = server default, 0 = everything)
+            <input bind:value={editReaderBackfill} type="number" min="0" max="3650" placeholder="server default" />
+          </label>
+          <button type="submit" disabled={readerSaving}>{readerSaving ? 'Saving…' : 'Save'}</button>
+          <button type="button" onclick={() => (readerEditingId = null)}>Cancel</button>
+        </form>
+      {:else}
+        <div class="row">
+          <strong>{a.title || a.username}</strong>
+          <span class="ovr">{a.api_base_url}</span>
+          <span class="ovr" class:env={a.is_enabled}>{a.is_enabled ? 'enabled' : 'disabled'}</span>
+          <span class="actions">
+            <button class="linkbtn" onclick={() => startEditReader(a)}>Edit</button>
+            <button class="linkbtn" onclick={() => testReaderAccount(a)}>Test</button>
+            <button
+              class="linkbtn"
+              onclick={() => pollReaderAccount(a)}
+              disabled={!a.is_enabled || readerPolling === a.id}
+            >
+              {readerPolling === a.id ? 'Polling…' : 'Poll now'}
+            </button>
+            <button class="linkbtn" onclick={() => toggleReaderAccount(a)}>
+              {a.is_enabled ? 'Disable' : 'Enable'}
+            </button>
+            <button class="linkbtn" onclick={() => removeReaderAccount(a)}>Delete</button>
+          </span>
+        </div>
+      {/if}
+      <p class="hint">
+        last checked: {fmtMailChecked(a.last_checked_at)} · user {a.username}
+      </p>
+      {#if a.last_error}<p class="bad">Last error: {a.last_error}</p>{/if}
+      {#if readerPollInfo[a.id]}<p class="ok">{readerPollInfo[a.id]}</p>{/if}
+      {#if readerTest[a.id]}
+        <p class={readerTest[a.id].ok ? 'ok' : 'bad'}>
+          {readerTest[a.id].ok
+            ? `Connection OK — ${readerTest[a.id].items_accessible} item(s) accessible`
+            : `Test failed: ${readerTest[a.id].error || 'Unknown error'}`}
+        </p>
+      {/if}
+    </div>
+  {:else}
+    <p class="hint">No reader account connected yet.</p>
+  {/each}
+</div>
+
 {#if $currentUser?.is_admin}
   <div class="card">
     <h2>Categories (admin)</h2>
@@ -596,6 +849,26 @@
         </li>
       {/each}
     </ul>
+    {#if suggestions.length}
+      <h3>Proposed categories</h3>
+      <p class="hint">
+        The summarizer felt these recurring topics didn't fit any existing category.
+      </p>
+      <ul class="suggestions">
+        {#each suggestions as s (s.normalized_text)}
+          <li>
+            <strong>{s.label}</strong> — {s.article_count} articles
+            {#if s.example_titles.length}
+              <span class="hint">e.g. {s.example_titles.join('; ')}</span>
+            {/if}
+            <div class="actions">
+              <button onclick={() => acceptSuggestion(s)}>Add as category</button>
+              <button class="link" onclick={() => dismissSuggestion(s)}>Dismiss</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 
   <div class="card">
@@ -780,14 +1053,17 @@
   @media (max-width: 700px) {
     .grid { grid-template-columns: 1fr; }
   }
-  .row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; }
+  .row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; flex-wrap: wrap; }
   .ovr {
     font-size: 0.72em; color: var(--warn); background: var(--warn-bg);
     border-radius: 999px; padding: 0 0.4rem; margin-left: 0.3rem;
   }
   .ovr.env { color: var(--accent); background: var(--chip-bg); }
   .inline { display: inline-flex; align-items: center; gap: 0.3rem; }
-  .actions { margin-left: 0.6rem; display: inline-flex; gap: 0.5rem; align-items: center; }
+  .actions { margin-left: 0.6rem; display: inline-flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .suggestions li { margin-bottom: 0.6rem; }
+  .suggestions .actions { margin-left: 0; display: flex; }
+  .mailacct strong { overflow-wrap: anywhere; }
   input:disabled { background: var(--disabled-bg); color: var(--disabled-text); cursor: not-allowed; }
   .ok { color: var(--ok); }
   .bad { color: var(--error); }

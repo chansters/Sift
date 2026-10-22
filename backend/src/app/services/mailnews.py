@@ -26,9 +26,10 @@ All blocking IMAP work runs via anyio.to_thread; no DB writes are held across
 network I/O (same writer-lock discipline as ingest.py).
 """
 
+import asyncio
 import imaplib
 import re
-import socket
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.header import decode_header, make_header
@@ -44,8 +45,8 @@ from typing_extensions import TypedDict
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.models import Article, Feed, MailAccount
-from app.services import activity, llm_client, llmtrace, prompts, usage
+from app.models import Article, Feed, MailAccount, UserFeed
+from app.services import activity, llm_budget, llm_client, llmtrace, prompts, usage
 from app.services.fulltext import fetch_full_text_batch
 from app.services.ingest import _is_duplicate, canonicalize_url
 
@@ -253,10 +254,31 @@ async def _llm_clean_filter(
         {"sender": sender, "subject": msg.subject, "chars": len(body)},
     )
     await session.commit()
+    # The cleaned text is a near-verbatim copy of the input, so input AND output must fit
+    # the context together: a body over half the budget is cleaned in paragraph chunks.
+    system, fixed_user = prompts.newsletter_clean(msg.subject, "")
+    chunk_chars = llm_budget.input_budget_chars(system, fixed_user) // 2
+    cleaned_parts: list[str] = []
+    latency_ms = 0
     try:
-        system, user = prompts.newsletter_clean(msg.subject, body)
-        with llmtrace.context("newsletter_clean", label=f"clean: {sender}: {msg.subject}"):
-            cleaned, latency_ms = await llm_client.chat_text(system, user)
+        parts = (
+            [body] if len(body) <= chunk_chars else llm_budget.split_paragraphs(body, chunk_chars)
+        )
+        for part in parts:
+            system, user = prompts.newsletter_clean(msg.subject, part)
+            with llmtrace.context("newsletter_clean", label=f"clean: {sender}: {msg.subject}"):
+                part_cleaned, part_ms = await llm_client.chat_text(system, user)
+            latency_ms += part_ms
+            cleaned_parts.append(part_cleaned)
+            usage.record(
+                session,
+                "newsletter_clean",
+                endpoint="chat",
+                model=settings.llm_model,
+                latency_ms=part_ms,
+                prompt_chars=len(system) + len(user),
+                completion_chars=len(part_cleaned),
+            )
     except llm_client.LLMError as exc:
         await activity.emit(
             session,
@@ -267,19 +289,11 @@ async def _llm_clean_filter(
         )
         await session.commit()
         return None
+    cleaned = "\n\n".join(cleaned_parts)
     surviving = dict.fromkeys(_PLACEHOLDER_RE.findall(cleaned))  # ordered set
     valid = {c.url for c in msg.candidates}
     kept = {url_map[p] for p in surviving if p in url_map} & valid
     unknown = len([p for p in surviving if p not in url_map])
-    usage.record(
-        session,
-        "newsletter_clean",
-        endpoint="chat",
-        model=settings.llm_model,
-        latency_ms=latency_ms,
-        prompt_chars=len(system) + len(user),
-        completion_chars=len(cleaned),
-    )
     await activity.emit(
         session,
         "mail",
@@ -368,23 +382,10 @@ IMAP_TIMEOUT_S = 30.0
 
 
 class _TimeoutIMAP4(imaplib.IMAP4):
-    """IMAP4 whose every socket op uses IMAP_TIMEOUT_S.
-
-    `file` is a read-only property in imaplib — never assign it. For plain
-    sockets makefile() only does a dup() (no buffering issue), so we simply
-    skip creating it here.
-    """
+    """IMAP4 whose every socket op uses IMAP_TIMEOUT_S."""
 
     def __init__(self, host: str, port: int):
-        # IMAP4.__init__ passes timeout through to open() — hand ours in,
-        # otherwise it would pass None (= infinite, the bug we're fixing).
         super().__init__(host, port, timeout=IMAP_TIMEOUT_S)
-
-    def open(
-        self, host: str = "", port: int = 143, timeout: float | None = IMAP_TIMEOUT_S
-    ) -> None:
-        self.host, self.port = host, port
-        self.sock = socket.create_connection((host, port), timeout=timeout)
 
 
 class _TimeoutIMAP4SSL(imaplib.IMAP4_SSL):
@@ -401,6 +402,18 @@ def _imap_connect(host: str, port: int, use_ssl: bool) -> imaplib.IMAP4:
     return _TimeoutIMAP4(host, port)
 
 
+def _imap_login(imap: imaplib.IMAP4, username: str, password: str) -> None:
+    """LOGIN only carries ASCII (imaplib encodes it as such); anything else goes
+    through SASL PLAIN, which is UTF-8 by definition (RFC 4616)."""
+    if "\0" in username or "\0" in password:
+        raise ValueError("credentials must not contain NUL characters")
+    if username.isascii() and password.isascii():
+        imap.login(username, password)
+        return
+    initial = b"\0" + username.encode() + b"\0" + password.encode()
+    imap.authenticate("PLAIN", lambda _challenge: initial)
+
+
 def _uid_search_new(imap: imaplib.IMAP4, last_uid: int, limit: int) -> list[int]:
     """UIDs strictly above the watermark, ascending, capped."""
     typ, data = imap.uid("SEARCH", None, "ALL")  # type: ignore[arg-type]
@@ -415,7 +428,7 @@ def _search_new_uids(account: MailAccount) -> list[int]:
     is what the 'Poll now' endpoint waits on."""
     imap = _imap_connect(account.host, account.port, account.use_ssl)
     try:
-        imap.login(account.username, account.password)
+        _imap_login(imap, account.username, account.password)
         imap.select(f'"{account.folder}"', readonly=True)
         return _uid_search_new(imap, account.last_uid, settings.mail_max_messages_per_poll)
     finally:
@@ -432,7 +445,7 @@ def _fetch_raw_by_uid(account: MailAccount, uids: list[int]) -> list[tuple[int, 
         return []
     imap = _imap_connect(account.host, account.port, account.use_ssl)
     try:
-        imap.login(account.username, account.password)
+        _imap_login(imap, account.username, account.password)
         imap.select(f'"{account.folder}"', readonly=True)
         out: list[tuple[int, bytes]] = []
         for uid in uids:
@@ -466,7 +479,7 @@ async def test_account(account: MailAccount) -> ProbeResult:
 def _probe_account(account: MailAccount) -> None:
     imap = _imap_connect(account.host, account.port, account.use_ssl)
     try:
-        imap.login(account.username, account.password)
+        _imap_login(imap, account.username, account.password)
         typ, _ = imap.select(f'"{account.folder}"', readonly=True)
         if typ != "OK":
             raise RuntimeError(f"folder not found: {account.folder}")
@@ -507,17 +520,49 @@ async def get_or_create_mail_feed(
     return feed, True
 
 
+EXTRACT_BATCH_SIZE = 12
+
+
+def _extract_batches(
+    msg: NewsletterMessage, candidates: list[LinkCandidate]
+) -> list[list[LinkCandidate]]:
+    """Slice candidates into batches of EXTRACT_BATCH_SIZE, halving any batch whose prompt would
+    exceed the model's context budget (one-link batches are kept as they are)."""
+    queue = [
+        candidates[i : i + EXTRACT_BATCH_SIZE]
+        for i in range(0, len(candidates), EXTRACT_BATCH_SIZE)
+    ]
+    batches: list[list[LinkCandidate]] = []
+    while queue:
+        batch = queue.pop(0)
+        system, user = prompts.newsletter_extract(
+            msg.sender_name or msg.sender_email,
+            msg.subject,
+            [(c.url, c.anchor, c.context) for c in batch],
+        )
+        if len(batch) > 1 and len(system) + len(user) > llm_budget.input_budget_chars(""):
+            half = len(batch) // 2
+            queue[:0] = [batch[:half], batch[half:]]
+        else:
+            batches.append(batch)
+    return batches
+
+
 async def _refine_with_llm(
     session: AsyncSession,
     msg: NewsletterMessage,
     candidates: list[LinkCandidate],
 ) -> dict[str, tuple[str, str]]:
-    """One LLM call: (title, verbatim intro) per link. Pure text mapping —
+    """Batch LLM calls: (title, verbatim intro) per link. Pure text mapping —
     filtering is pass 1's job (_llm_clean_filter).
 
+    Candidates are sliced into chunks of EXTRACT_BATCH_SIZE so prompt and
+    completion sizes stay well within context windows and network timeouts, and
+    a failure in one chunk doesn't forfeit the others.
+
     URLs are validated against the code-extracted candidate set — hallucinated
-    URLs are dropped. On LLM failure returns {} so the caller falls back to
-    heuristic intros (better to over-include than lose news).
+    URLs are dropped. On LLM failure for a batch, falls back to heuristic intros
+    for that batch's items (better to over-include than lose news).
     """
     if not settings.newsletter_llm_extract or not candidates:
         return {}
@@ -529,49 +574,72 @@ async def _refine_with_llm(
         {"sender": sender, "subject": msg.subject, "links": len(candidates)},
     )
     await session.commit()
-    try:
-        system, user = prompts.newsletter_extract(
-            sender, msg.subject, [(c.url, c.anchor, c.context) for c in candidates]
+
+    valid = {c.url for c in candidates}
+    out: dict[str, tuple[str, str]] = {}
+    total_latency_ms = 0
+    batches = _extract_batches(msg, candidates)
+    num_batches = len(batches)
+
+    for batch_idx, chunk in enumerate(batches):
+        batch_label = (
+            f"extract: {sender}: {msg.subject}"
+            if num_batches == 1
+            else f"extract ({batch_idx + 1}/{num_batches}): {sender}: {msg.subject}"
         )
-        with llmtrace.context("newsletter_extract", label=f"extract: {sender}: {msg.subject}"):
-            result, latency_ms = await llm_client.chat_json(system, user)
-    except llm_client.LLMError as exc:
-        await activity.emit(
-            session,
-            "mail",
-            "newsletter_extract_error",
-            {"sender": sender, "error": str(exc)[:300]},
-            level="error",
-        )
-        await session.commit()
-        return {}
+        try:
+            system, user = prompts.newsletter_extract(
+                sender, msg.subject, [(c.url, c.anchor, c.context) for c in chunk]
+            )
+            with llmtrace.context("newsletter_extract", label=batch_label):
+                result, latency_ms = await llm_client.chat_json(system, user)
+            total_latency_ms += latency_ms
+            usage.record(
+                session,
+                "newsletter_extract",
+                endpoint="chat",
+                model=settings.llm_model,
+                latency_ms=latency_ms,
+                prompt_chars=len(system) + len(user),
+            )
+            items = result.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    url = canonicalize_url(str(item.get("url", "")))
+                    if url not in valid:
+                        continue
+                    out[url] = (
+                        str(item.get("title", ""))[:300],
+                        str(item.get("intro", ""))[:2000],
+                    )
+        except llm_client.LLMError as exc:
+            await activity.emit(
+                session,
+                "mail",
+                "newsletter_extract_error",
+                {
+                    "sender": sender,
+                    "batch": f"{batch_idx + 1}/{num_batches}",
+                    "error": str(exc)[:300],
+                },
+                level="error",
+            )
+            await session.commit()
+
     await activity.emit(
         session,
         "mail",
         "newsletter_extract_done",
-        {"sender": sender, "links": len(candidates), "llm_ms": latency_ms},
+        {
+            "sender": sender,
+            "links": len(candidates),
+            "extracted": len(out),
+            "llm_ms": total_latency_ms,
+        },
     )
     await session.commit()
-    usage.record(
-        session,
-        "newsletter_extract",
-        endpoint="chat",
-        model=settings.llm_model,
-        latency_ms=latency_ms,
-        prompt_chars=len(system) + len(user),
-    )
-    valid = {c.url for c in candidates}
-    out: dict[str, tuple[str, str]] = {}
-    items = result.get("items")
-    if not isinstance(items, list):
-        return out
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        url = canonicalize_url(str(item.get("url", "")))
-        if url not in valid:
-            continue
-        out[url] = (str(item.get("title", ""))[:300], str(item.get("intro", ""))[:2000])
     return out
 
 
@@ -580,13 +648,24 @@ async def _fulltext_batch(feed_id: int, article_ids: list[int]) -> list[int]:
     return await fetch_full_text_batch(feed_id, article_ids)
 
 
-async def _process_message(session: AsyncSession, msg: NewsletterMessage) -> int:
+async def _process_message(
+    session: AsyncSession, msg: NewsletterMessage, user_id: int | None = None
+) -> int:
     """Create articles for one parsed newsletter. Returns new article count."""
     if not msg.candidates:
         return 0
     feed, _created = await get_or_create_mail_feed(
         session, msg.sender_email, msg.sender_name
     )
+    feed.email_count += 1
+    if user_id is not None:
+        uf = await session.scalar(
+            select(UserFeed).where(
+                UserFeed.user_id == user_id, UserFeed.feed_id == feed.id
+            )
+        )
+        if uf is None:
+            session.add(UserFeed(user_id=user_id, feed_id=feed.id))
     await session.commit()  # clean session before the LLM call (writer-lock rule)
 
     # Pass 1 (optional): the LLM deletes the non-news chrome from the full
@@ -715,7 +794,7 @@ async def process_messages(
                         },
                     )
                     await session.commit()
-                    new_articles += await _process_message(session, msg)
+                    new_articles += await _process_message(session, msg, user_id=account.user_id)
                     processed += 1
                 except Exception as exc:
                     await session.rollback()
@@ -759,20 +838,25 @@ async def process_messages(
 # run in the background for minutes — a second click, or the scheduler sweep
 # firing mid-poll, would reprocess the SAME messages (the UID watermark only
 # advances as messages complete), doubling every LLM call and racing the
-# dedupe check. Single event loop → a plain set is race-free.
-_polling_accounts: set[int] = set()
+# dedupe check. Single event loop → dict lookup is race-free.
+# Locks auto-expire after POLL_LOCK_TIMEOUT_S to guarantee self-healing if a
+# task crashes or wedges.
+POLL_LOCK_TIMEOUT_S = 1800.0  # 30 minutes
+_polling_accounts: dict[int, float] = {}
 
 
 def try_begin_poll(account_id: int) -> bool:
     """Mark an account as being polled; False when a poll is already running."""
-    if account_id in _polling_accounts:
+    now = time.monotonic()
+    started = _polling_accounts.get(account_id)
+    if started is not None and (now - started) < POLL_LOCK_TIMEOUT_S:
         return False
-    _polling_accounts.add(account_id)
+    _polling_accounts[account_id] = now
     return True
 
 
 def end_poll(account_id: int) -> None:
-    _polling_accounts.discard(account_id)
+    _polling_accounts.pop(account_id, None)
 
 
 async def poll_account(session: AsyncSession, account: MailAccount) -> dict[str, int]:
@@ -782,28 +866,41 @@ async def poll_account(session: AsyncSession, account: MailAccount) -> dict[str,
         # watermark is unchanged, so polling now would redo the same work.
         return {"messages": 0, "new_articles": 0, "skipped_old": 0}
     try:
-        await activity.emit(
-            session,
-            "mail",
-            "mail_poll_start",
-            {"account": f"{account.username}@{account.host}", "folder": account.folder},
-        )
-        await session.commit()
-        try:
-            messages = await fetch_new_messages(account)
-        except Exception as exc:
-            account.last_checked_at = datetime.now(UTC)
-            account.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+        async with asyncio.timeout(POLL_LOCK_TIMEOUT_S):
             await activity.emit(
                 session,
                 "mail",
-                "mail_poll_failed",
-                {"account": f"{account.username}@{account.host}", "error": account.last_error},
-                level="error",
+                "mail_poll_start",
+                {"account": f"{account.username}@{account.host}", "folder": account.folder},
             )
             await session.commit()
-            return {"messages": 0, "new_articles": 0, "skipped_old": 0}
-        return await process_messages(session, account, messages)
+            try:
+                messages = await fetch_new_messages(account)
+            except Exception as exc:
+                account.last_checked_at = datetime.now(UTC)
+                account.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+                await activity.emit(
+                    session,
+                    "mail",
+                    "mail_poll_failed",
+                    {"account": f"{account.username}@{account.host}", "error": account.last_error},
+                    level="error",
+                )
+                await session.commit()
+                return {"messages": 0, "new_articles": 0, "skipped_old": 0}
+            return await process_messages(session, account, messages)
+    except TimeoutError:
+        account.last_checked_at = datetime.now(UTC)
+        account.last_error = f"Poll timed out after {int(POLL_LOCK_TIMEOUT_S // 60)} minutes"
+        await activity.emit(
+            session,
+            "mail",
+            "mail_poll_failed",
+            {"account": f"{account.username}@{account.host}", "error": account.last_error},
+            level="error",
+        )
+        await session.commit()
+        return {"messages": 0, "new_articles": 0, "skipped_old": 0}
     finally:
         end_poll(account.id)
 

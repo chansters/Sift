@@ -3,12 +3,16 @@
 import type {
   AuthUser,
   Category,
+  CategorySuggestion,
   ChatResponse,
   ChatStory,
+  DiscoveredFeed,
   Feed,
+  FeedDiscoveryResult,
   FeedOption,
   MailAccount,
   ManagedUser,
+  ReaderAccount,
   SimilarStory,
   StoryDetail,
   StoryListItem,
@@ -26,6 +30,12 @@ const TOKEN_KEY = 'newsgator_token';
 // localStorage (which does persist) and send as a Bearer header.
 export function getToken(): string {
   return typeof localStorage === 'undefined' ? '' : (localStorage.getItem(TOKEN_KEY) ?? '');
+}
+
+/** Feeds still publish http:// image links, which browsers block as mixed
+ * content on an https page; load them over https instead. */
+export function imageSrc(url: string): string {
+  return url.replace(/^http:\/\//i, 'https://');
 }
 
 /** Favicon proxy URL for a source host. <img> can't send Authorization
@@ -92,6 +102,14 @@ async function req<T>(
   return res.json();
 }
 
+export type DiscoveryEvent =
+  | { type: 'stage'; stage: string }
+  | { type: 'progress'; current: number; total: number; target: string }
+  | { type: 'feed'; feed: DiscoveredFeed }
+  | { type: 'done'; feeds: DiscoveredFeed[] }
+  | { type: 'ping' }
+  | { type: 'error'; message: string };
+
 export const api = {
   setupNeeded: () => req<{ setup_needed: boolean }>('/auth/setup-needed'),
   setup: async (username: string, password: string) => {
@@ -120,9 +138,15 @@ export const api = {
     summary_language?: string;
     story_sort?: 'updated' | 'published' | 'sources';
     story_order?: 'asc' | 'desc';
-    story_filter?: 'all' | 'unread' | 'updated';
-    category_interests?: string[];
+    story_filter?: 'all' | 'unread' | 'updated' | 'saved';
   }) => req<User>('/auth/me', { method: 'PATCH', body: patch }),
+  categoryInterests: {
+    get: () => req<{ category_interests: string[]; categories: string[] }>('/auth/me/category-interests'),
+    update: (category_interests: string[]) =>
+      req<{ category_interests: string[] }>('/auth/me/category-interests', {
+        method: 'PUT', body: { category_interests }
+      })
+  },
 
   users: {
     list: () => req<ManagedUser[]>('/users'),
@@ -137,6 +161,43 @@ export const api = {
     list: () => req<Feed[]>('/feeds'),
     create: (f: { url: string; title?: string; poll_interval_min?: number; backfill_days?: number }) =>
       req<Feed>('/feeds', { method: 'POST', body: f }),
+    discover: (params: { themes?: string[]; query?: string; mode?: 'catalog' | 'smart'; locale?: string; excluded_urls?: string[] }) =>
+      req<FeedDiscoveryResult>('/feeds/discover', { method: 'POST', body: params }),
+    /** Streams a search (NDJSON); resolves with the final ranked feeds. */
+    discoverStream: async (
+      params: { themes?: string[]; query?: string; mode?: 'catalog' | 'smart'; locale?: string; excluded_urls?: string[] },
+      onEvent: (event: DiscoveryEvent) => void
+    ): Promise<DiscoveredFeed[]> => {
+      const res = await fetch(BASE + '/feeds/discover/stream', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      if (!res.ok || !res.body) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail ?? `HTTP ${res.status}`);
+      }
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      let final: DiscoveredFeed[] | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (value) buffer += value;
+        const lines = buffer.split('\n');
+        buffer = done ? '' : (lines.pop() ?? '');
+        for (const line of done ? lines.concat(buffer) : lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as DiscoveryEvent;
+          if (event.type === 'error') throw new Error(event.message);
+          if (event.type === 'done') final = event.feeds;
+          onEvent(event);
+        }
+        if (done) break;
+      }
+      if (!final) throw new Error('Discovery ended unexpectedly');
+      return final;
+    },
     update: (id: number, patch: Partial<Feed>) =>
       req<Feed>(`/feeds/${id}`, { method: 'PATCH', body: patch }),
     remove: (id: number) => req<void>(`/feeds/${id}`, { method: 'DELETE' }),
@@ -165,6 +226,37 @@ export const api = {
         invalid: number;
         feeds: Feed[];
       }>;
+    },
+    importSubscriptions: async (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/feeds/import-subscriptions', {
+        method: 'POST',
+        credentials: 'include',
+        headers: authHeaders(),
+        body: form
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail ?? `HTTP ${res.status}`);
+      }
+      return res.json() as Promise<{
+        added: number;
+        skipped: number;
+        invalid: number;
+        feeds: Feed[];
+      }>;
+    },
+    exportOpml: async () => {
+      const res = await fetch('/api/feeds/export-opml', {
+        credentials: 'include',
+        headers: authHeaders()
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail ?? `HTTP ${res.status}`);
+      }
+      return res.blob();
     }
   },
 
@@ -173,7 +265,18 @@ export const api = {
     create: (name: string) => req<Category>('/categories', { method: 'POST', body: { name } }),
     rename: (id: number, name: string) =>
       req<Category>(`/categories/${id}`, { method: 'PATCH', body: { name } }),
-    remove: (id: number) => req<void>(`/categories/${id}`, { method: 'DELETE' })
+    remove: (id: number) => req<void>(`/categories/${id}`, { method: 'DELETE' }),
+    suggestions: () => req<CategorySuggestion[]>('/categories/suggestions'),
+    acceptSuggestion: (s: CategorySuggestion) =>
+      req<Category>('/categories/suggestions/accept', {
+        method: 'POST',
+        body: { normalized_text: s.normalized_text, label: s.label }
+      }),
+    dismissSuggestion: (s: CategorySuggestion) =>
+      req<void>('/categories/suggestions/dismiss', {
+        method: 'POST',
+        body: { normalized_text: s.normalized_text }
+      })
   },
 
   // Per-user IMAP accounts for newsletter ingestion (password is write-only)
@@ -203,15 +306,64 @@ export const api = {
       )
   },
 
+  // Per-user third-party RSS reader API accounts (Google Reader API standard)
+  readerAccounts: {
+    list: () => req<ReaderAccount[]>('/reader-accounts'),
+    create: (a: {
+      provider: 'greader';
+      title?: string;
+      api_base_url: string;
+      username: string;
+      password?: string;
+      auth_token?: string;
+      is_enabled?: boolean;
+      initial_import_count?: number;
+      backfill_days?: number | null;
+    }) => req<ReaderAccount>('/reader-accounts', { method: 'POST', body: a }),
+    update: (id: number, patch: Partial<Omit<ReaderAccount, 'id' | 'user_id' | 'virtual_feed_id' | 'last_checked_at' | 'last_error' | 'created_at'>> & { password?: string; auth_token?: string }) =>
+      req<ReaderAccount>(`/reader-accounts/${id}`, { method: 'PATCH', body: patch }),
+    remove: (id: number) => req<void>(`/reader-accounts/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      req<{ ok: boolean; items_accessible: number; error: string | null }>(
+        `/reader-accounts/${id}/test`,
+        { method: 'POST' }
+      ),
+    poll: (id: number) =>
+      req<{ new_articles: number; read_synced: number }>(
+        `/reader-accounts/${id}/poll`,
+        { method: 'POST' }
+      )
+  },
+
   stories: {
-    list: (filter: string = 'all', category?: string, sort: string = 'published', order: string = 'asc', feedId?: number) => {
-      const params = new URLSearchParams({ filter, sort, order });
+    list: (
+      filter: 'all' | 'unread' | 'updated' | 'saved' = 'all',
+      category?: string,
+      sort: string = 'published',
+      order: string = 'asc',
+      feedId?: number
+    ) => {
+      const params = new URLSearchParams({
+        filter: filter === 'saved' ? 'all' : filter,
+        sort,
+        order
+      });
+      if (filter === 'saved') params.set('saved', 'true');
       if (category) params.set('category', category);
       if (feedId) params.set('feed', String(feedId));
       return req<StoryListItem[]>(`/stories?${params}`);
     },
     // feeds with at least one story — story-list filter options (all users)
     feedOptions: () => req<FeedOption[]>('/stories/feed-options'),
+    // filter-pill counts without loading story payloads
+    counts: (category?: string, feedId?: number) => {
+      const params = new URLSearchParams();
+      if (category) params.set('category', category);
+      if (feedId) params.set('feed', String(feedId));
+      return req<{ all: number; unread: number; updated: number; saved: number }>(
+        `/stories/counts?${params}`
+      );
+    },
     detail: (id: number) => req<StoryDetail>(`/stories/${id}`),
     // proximity-ranked merge candidates (centroid cosine, best-first)
     similar: (id: number) => req<SimilarStory[]>(`/stories/${id}/similar`),
@@ -220,6 +372,10 @@ export const api = {
       req<SimilarStory[]>(`/stories/articles/${articleId}/similar-stories`),
     read: (id: number) => req<void>(`/stories/${id}/read`, { method: 'POST' }),
     unread: (id: number) => req<void>(`/stories/${id}/unread`, { method: 'POST' }),
+    setSaved: (id: number, saved: boolean) =>
+      req<{ saved: boolean; saved_at: string | null }>(`/stories/${id}/saved`, {
+        method: saved ? 'PUT' : 'DELETE'
+      }),
     diff: (id: number, fromVersion: number) =>
       req<{ from_version: number; changes: { version: number; summary: string; at: string }[] }>(
         `/stories/${id}/diff?from=${fromVersion}`
@@ -316,9 +472,14 @@ export const api = {
     ask: (question: string) =>
       req<ChatResponse>('/chat', { method: 'POST', body: { question } }),
     history: () =>
-      req<{ role: string; content: string; stories: ChatStory[]; latency_ms: number }[]>(
-        '/chat/history'
-      ),
+      req<
+        {
+          role: string;
+          content: string;
+          stories: ChatStory[];
+          latency_ms: number;
+        }[]
+      >('/chat/history'),
     clearHistory: () => req<void>('/chat/history', { method: 'DELETE' })
   }
 };

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api, faviconUrl, feedHost } from '$lib/api';
   import type { Feed } from '$lib/types';
+  import FeedDiscoveryModal from '$lib/components/FeedDiscoveryModal.svelte';
 
   let feeds = $state<Feed[]>([]);
   let url = $state('');
@@ -9,10 +10,15 @@
   let adding = $state(false);
   let importResult = $state('');
   let importing = $state(false);
+  let importingSubs = $state(false);
+  let subsResult = $state('');
+  let exporting = $state(false);
+  let exportError = $state('');
   let refreshing = $state(false);
   let refreshingId = $state<number | null>(null);
   // '' = server default, '0' = import everything, else days
   let backfill = $state('');
+  let discoverOpen = $state(false);
 
   onMount(load);
 
@@ -37,6 +43,43 @@
     } finally {
       importing = false;
       input.value = '';
+    }
+  }
+
+  async function importSubs(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importingSubs = true;
+    subsResult = '';
+    try {
+      const r = await api.feeds.importSubscriptions(file);
+      subsResult = `Imported ${r.added} feed${r.added === 1 ? '' : 's'}` +
+        (r.skipped ? `, ${r.skipped} already existed` : '') +
+        (r.invalid ? `, ${r.invalid} invalid entries` : '');
+      await load();
+    } catch (err) {
+      subsResult = err instanceof Error ? err.message : 'Import failed';
+    } finally {
+      importingSubs = false;
+      input.value = '';
+    }
+  }
+
+  async function exportOpml() {
+    exporting = true;
+    exportError = '';
+    try {
+      const blob = await api.feeds.exportOpml();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'newsgator-subscriptions.opml';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      exportError = err instanceof Error ? err.message : 'Export failed';
+    } finally {
+      exporting = false;
     }
   }
 
@@ -110,7 +153,7 @@
 {#if error}<p class="error">{error}</p>{/if}
 
 <form class="card add" onsubmit={add}>
-  <input placeholder="https://example.com/feed.xml" bind:value={url} required type="url" />
+  <input placeholder="Feed URL, YouTube channel URL, video URL or @handle" bind:value={url} required type="text" />
   <label class="backfill">
     Initial import
     <select bind:value={backfill}>
@@ -123,8 +166,13 @@
     </select>
   </label>
   <button type="submit" disabled={adding}>{adding ? 'Adding…' : 'Add feed'}</button>
+  <button type="button" class="btn-discover" onclick={() => (discoverOpen = true)}>
+    ✨ Discover feeds
+  </button>
   {#if error}<span class="error">{error}</span>{/if}
 </form>
+
+<FeedDiscoveryModal bind:open={discoverOpen} onAdded={load} />
 
 <div class="card import">
   <label class="import-label">
@@ -132,11 +180,20 @@
     <input type="file" accept=".opml,.xml" onchange={importOpml} disabled={importing} />
   </label>
   {#if importResult}<p class="small">{importResult}</p>{/if}
+  <label class="import-label" style="margin-top: 0.6rem">
+    ▶ Import YouTube subscriptions (Google Takeout subscriptions.csv or OPML)
+    <input type="file" accept=".csv,.opml,.xml" onchange={importSubs} disabled={importingSubs} />
+  </label>
+  {#if subsResult}<p class="small">{subsResult}</p>{/if}
   <div class="row" style="margin-top: 0.6rem">
     <button onclick={refreshAll} disabled={refreshing}>
       {refreshing ? 'Refreshing…' : '↻ Refresh all feeds now'}
     </button>
+    <button onclick={exportOpml} disabled={exporting}>
+      {exporting ? 'Exporting…' : '📤 Export OPML'}
+    </button>
   </div>
+  {#if exportError}<p class="small error">{exportError}</p>{/if}
 </div>
 
 {#each feeds as feed (feed.id)}
@@ -149,6 +206,10 @@
       <strong>{feed.title || feed.url}</strong>
       {#if feed.kind === 'mail'}
         <span class="badge mail">✉ newsletter</span>
+      {:else if feed.url.includes('youtube.com/feeds/videos.xml')}
+        <span class="badge video">▶ YouTube</span>
+      {:else if feed.kind === 'reader_api'}
+        <span class="badge reader">📡 reader api</span>
       {/if}
       <span class="badge" class:off={!feed.is_enabled}>
         {feed.is_enabled ? 'enabled' : 'disabled'}
@@ -181,7 +242,12 @@
     <div class="meta">
       {#if feed.kind === 'mail'}
         <span>from: {feed.sender_email}</span>
+        <span>{feed.email_count} email{feed.email_count === 1 ? '' : 's'} ingested</span>
         <span>populated by the mailbox poll (Settings → Newsletter inboxes)</span>
+      {:else if feed.kind === 'reader_api'}
+        <span>virtual feed for connected RSS reader account</span>
+        <span>last fetched: {fmt(feed.last_fetched_at)}</span>
+        <span>managed under Settings → RSS Reader Accounts</span>
       {:else}
         <span>{feed.url}</span>
         <span>polls every {feed.poll_interval_min} min</span>
@@ -204,6 +270,15 @@
 <style>
   .add { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
   .add input { flex: 1; min-width: 0; }
+  .btn-discover {
+    background: var(--surface-soft);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .btn-discover:hover {
+    background: var(--chip-bg);
+  }
   .backfill {
     display: flex;
     align-items: center;
@@ -225,6 +300,7 @@
   .badge.off { background: var(--frozen-bg); color: var(--frozen-text); }
   .badge.warn { background: var(--error-bg); color: var(--error); }
   .badge.mail { background: var(--chip-bg); color: var(--accent); }
+  .badge.reader { background: var(--chip-bg); color: var(--accent); }
   .badge.counts {
     background: var(--chip-bg);
     color: var(--text-secondary);

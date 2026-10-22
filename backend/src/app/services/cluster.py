@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models import Article, ClusterDecision, Story, StoryRevision
-from app.services import activity, llm_client, llmtrace, prompts, usage
+from app.services import activity, llm_client, llmtrace, prompts, usage, youtube
 from app.services.vectorstore import cosine_similarity, get_vector_store
 
 HALF_LIFE_HOURS = 24.0
@@ -164,8 +164,13 @@ async def _create_story(
     # API) for the duration of the request. Headline is cosmetic; fall back to
     # the article title on LLM failure.
     headline: str | None = None
+    story_lang = article.language if article.language else settings.summary_language
     try:
-        system, user = prompts.story_headline([article.summary])
+        system, user = prompts.story_headline(
+            [article.summary],
+            lang_code=story_lang,
+            media_kind=youtube.media_kind_for_link(article.url),
+        )
         with llmtrace.context("headline", label=article.title, article_id=article.id):
             result, latency_ms = await llm_client.chat_json(system, user)
         headline = str(result.get("headline", ""))
@@ -182,7 +187,10 @@ async def _create_story(
     except llm_client.LLMError:
         headline = None
 
-    story = Story(category=article.category or "Uncategorized")
+    story = Story(
+        category=article.category or "Uncategorized",
+        language=story_lang,
+    )
     session.add(story)
     await session.flush()
     story.title = headline or article.title
@@ -194,6 +202,9 @@ async def _create_story(
     story.image_url = article.image_url
     session.add(StoryRevision(story_id=story.id, version=1, summary=story.summary))
     await get_vector_store(session).upsert_story_centroid(story.id, list(vec))
+    from app.services.translation import enqueue_story_translation
+
+    enqueue_story_translation(story.id)
     return story
 
 
@@ -224,7 +235,10 @@ async def _attach_to_story(
 
     if has_new_facts:
         try:
-            system, user = prompts.merge_story_summary(story.summary, article.summary)
+            story_lang = story.language or settings.summary_language
+            system, user = prompts.merge_story_summary(
+                story.summary, article.summary, lang_code=story_lang
+            )
             with llmtrace.context("merge", label=story.title, article_id=article.id):
                 merged, latency_ms = await llm_client.chat_json(system, user)
             usage.record(
@@ -248,6 +262,9 @@ async def _attach_to_story(
                 story_id=story.id, version=story.version, summary=story.summary
             )
         )
+        from app.services.translation import enqueue_story_translation
+
+        enqueue_story_translation(story.id)
         await activity.emit(
             session, "cluster", "story_update",
             {"story_id": story.id, "version": story.version},

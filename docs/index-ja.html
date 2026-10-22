@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NewsGator — 出来事ごとに1つのストーリー</title>
+<meta name="description" content="NewsGatorは、あらゆるソースの同じ出来事を1つの進化するストーリーに統合するニュースアグリゲーターです。誇張しない見出しと最新の中立要約で把握し、読むときは元の出版社へ戻れます。Apple Intelligenceアプリとして、または自分で運用するサーバーとして使えます。" />
+<meta property="og:locale" content="ja_JP" />
+<meta property="og:title" content="NewsGator — 出来事ごとに1つのストーリー" />
+<meta property="og:description" content="出来事ごとに1つのストーリー。誇張しない見出しで把握し、元記事を読んで書き手を支援。Apple Intelligenceまたはセルフホストのサーバーで動作します。" />
+<meta property="og:image" content="https://www.newsgator.app/assets/store/og-ja.jpg" />
+<meta property="og:url" content="https://www.newsgator.app/index-ja.html" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="NewsGator — 出来事ごとに1つのストーリー" />
+<meta name="twitter:description" content="出来事ごとに1つのストーリー。誇張しない見出し。読むときは元の出版社へ。" />
+<link rel="canonical" href="https://www.newsgator.app/index-ja.html" />
+<link rel="icon" href="assets/logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --forest: #146B3A;
+  --forest-dark: #0B3D2A;
+  --gold: #F2B827;
+  --gold-soft: #FFF6DD;
+  --ink: #18211D;
+  --muted: #66716C;
+  --paper: #F8F7F1;
+  --surface: #FFFFFF;
+  --soft: #EFF5EE;
+  --line: #E3E7E1;
+  --line-strong: #CCD4CC;
+  --radius: 18px;
+  --radius-lg: 26px;
+  --shadow: 0 24px 60px rgba(11, 61, 42, 0.08);
+  --shadow-card: 0 8px 28px rgba(24, 33, 29, 0.06);
+  --font-display: "Newsreader", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", Georgia, serif;
+  --font-body: "Inter", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", "Hiragino Sans", "Yu Gothic", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; height: auto; display: block; }
+a { color: inherit; }
+::selection { background: var(--gold); color: var(--forest-dark); }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+main { overflow: clip; }
+section { padding: 88px 0; }
+.section-head { max-width: 720px; margin-bottom: 34px; }
+.eyebrow, .mini-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--forest);
+}
+.eyebrow {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.18);
+}
+h1, h2, h3 {
+  margin: 0;
+  color: var(--forest-dark);
+  letter-spacing: 0;
+}
+h1 {
+  font-family: var(--font-display);
+  font-size: clamp(46px, 7vw, 82px);
+  line-height: 1.08;
+  margin: 20px 0 18px;
+}
+h2 {
+  font-family: var(--font-display);
+  font-size: clamp(32px, 4.6vw, 50px);
+  line-height: 1.2;
+  margin-bottom: 12px;
+}
+h3 {
+  font-family: var(--font-display);
+  font-size: 25px;
+  line-height: 1.3;
+}
+p { margin: 0; }
+.sub {
+  max-width: 700px;
+  color: var(--muted);
+  font-size: 18px;
+}
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(248, 247, 241, 0.86);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+.site-nav.scrolled { border-bottom-color: var(--line); }
+.site-nav .wrap {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 700;
+}
+.brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+}
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+}
+.nav-links a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 14.5px;
+  font-weight: 500;
+}
+.nav-links a:hover,
+.nav-links a:focus-visible { color: var(--forest); }
+.nav-links .nav-cta {
+  padding: 10px 16px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--forest);
+  box-shadow: 0 8px 20px rgba(20, 107, 58, 0.2);
+}
+.hero {
+  padding: 64px 0 52px;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+  gap: 28px;
+  align-items: start;
+}
+.hero-copy .lede {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: clamp(18px, 2vw, 21px);
+}
+.hero-copy .lede strong { color: var(--ink); }
+.hero-copy .note {
+  margin-top: 18px;
+  color: var(--forest-dark);
+  font-weight: 600;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 26px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-radius: 14px;
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+.btn:hover,
+.btn:focus-visible { transform: translateY(-1px); }
+.btn.primary {
+  background: var(--forest);
+  color: #fff;
+  box-shadow: 0 10px 28px rgba(20, 107, 58, 0.2);
+}
+.btn.primary:hover,
+.btn.primary:focus-visible { background: var(--forest-dark); }
+.btn.secondary {
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+.btn.secondary:hover,
+.btn.secondary:focus-visible { border-color: var(--forest); color: var(--forest); }
+.promise-stack {
+  display: grid;
+  gap: 14px;
+}
+.promise {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 22px 22px 20px;
+  box-shadow: var(--shadow-card);
+}
+.promise .k {
+  color: var(--forest);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.promise h3 { margin-top: 10px; font-size: 23px; }
+.promise p { margin-top: 10px; color: var(--muted); font-size: 15.5px; }
+.fact-strip {
+  margin-top: 26px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(239,245,238,0.95));
+  color: var(--forest-dark);
+}
+.fact-strip ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+.fact-strip li {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.fact-strip strong { color: var(--ink); }
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 26px 22px;
+  box-shadow: var(--shadow-card);
+}
+.step-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  margin-bottom: 14px;
+  background: var(--soft);
+  color: var(--forest);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.card p,
+.engine p,
+.feature p,
+.caption,
+.code-note,
+.footer-note {
+  color: var(--muted);
+}
+.card p { margin-top: 12px; font-size: 15.5px; }
+.modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.engine {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-lg) + 2px);
+  padding: 28px 24px;
+  box-shadow: var(--shadow-card);
+}
+.engine.featured {
+  border-color: rgba(242, 184, 39, 0.65);
+  box-shadow: 0 16px 40px rgba(242, 184, 39, 0.16);
+}
+.engine .mini-label {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+}
+.engine.featured .mini-label {
+  background: var(--gold-soft);
+  border-color: rgba(242, 184, 39, 0.38);
+  color: #7a5a00;
+}
+.engine p { margin-top: 12px; font-size: 15.5px; }
+.engine ul {
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.engine li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 15.5px;
+}
+.engine li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--forest);
+  font-weight: 700;
+}
+.code-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--forest-dark);
+  color: #D7EBDD;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-x: auto;
+}
+.code-note .muted { color: #89AE99; }
+.inline-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+  color: var(--forest-dark);
+}
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.feature {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px 16px;
+  box-shadow: var(--shadow-card);
+}
+.feature h3 {
+  font-size: 19px;
+  margin-bottom: 8px;
+}
+.feature p { font-size: 14.5px; }
+.gallery-intro { margin-bottom: 28px; }
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.shot {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-lg) + 2px);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+.shot.wide { grid-column: span 6; }
+.shot.phone { grid-column: span 3; }
+.shot.full { grid-column: span 12; }
+.shot-media {
+  overflow: hidden;
+  border-radius: 20px;
+  background: #fff;
+}
+.shot.wide .shot-media img { border-radius: 16px; }
+.shot.full .shot-media { max-width: 560px; margin: 0 auto; }
+.shot.phone .shot-media {
+  max-width: 360px;
+  margin: 0 auto;
+  border-radius: 20px;
+}
+.shot.phone .shot-media img { border-radius: 16px; }
+figcaption { margin-top: 14px; }
+figcaption strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+}
+.cta-block {
+  text-align: center;
+  padding-top: 12px;
+}
+.cta-block .sub { margin: 0 auto; }
+footer {
+  padding: 30px 0 42px;
+  border-top: 1px solid var(--line);
+}
+.footer-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 14px 22px;
+  align-items: center;
+}
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.footer-links a {
+  text-decoration: none;
+  color: var(--muted);
+}
+.footer-links a:hover,
+.footer-links a:focus-visible { color: var(--forest); }
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.reveal.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (max-width: 980px) {
+  .hero-grid,
+  .gallery,
+  .modes,
+  .grid-3,
+  .feature-grid,
+  .fact-strip ul {
+    grid-template-columns: 1fr;
+  }
+  .shot.wide, .shot.phone, .shot.full { grid-column: auto; }
+}
+@media (max-width: 760px) {
+  .site-nav .wrap { align-items: flex-start; padding-top: 14px; padding-bottom: 14px; }
+  .nav-links a:not(.nav-cta) { display: none; }
+  section { padding: 70px 0; }
+  .hero { padding-top: 42px; }
+  .wrap { padding: 0 18px; }
+  .promise, .engine, .card, .feature, .shot { padding-left: 18px; padding-right: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+.shot-media { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center; flex-direction: column;
+  background: rgba(11, 61, 42, 0.92); padding: 24px; gap: 14px;
+}
+.lightbox.open { display: flex; }
+.lightbox img {
+  max-width: min(96vw, 1600px); max-height: calc(100vh - 110px);
+  width: auto; height: auto; border-radius: 12px; background: #fff;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4);
+}
+.lightbox .lb-caption { color: #fff; font-size: 15px; text-align: center; max-width: 720px; }
+.lightbox button {
+  position: absolute; border: 0; cursor: pointer; color: #fff;
+  background: rgba(255,255,255,.15); border-radius: 999px;
+  width: 44px; height: 44px; font-size: 24px; line-height: 1;
+}
+.lightbox button:hover, .lightbox button:focus-visible { background: rgba(255,255,255,.3); }
+.lightbox .lb-close { top: 16px; right: 16px; }
+.lightbox .lb-prev { left: 16px; top: 50%; transform: translateY(-50%); }
+.lightbox .lb-next { right: 16px; top: 50%; transform: translateY(-50%); }
+@media (max-width: 760px) {
+  .lightbox .lb-prev, .lightbox .lb-next { top: auto; bottom: 16px; transform: none; }
+}
+.langs { font-size: 14px; margin-top: 18px; color: var(--muted); }
+.langs a { margin-right: 10px; }
+.langs .current { font-weight: 600; margin-right: 10px; }
+.btn.store { padding: 0; border: 0; background: none; box-shadow: none; border-radius: 10px; }
+.btn.store img { display: block; height: 52px; width: auto; }
+.avail { margin-top: 18px; color: var(--forest-dark); font-weight: 600; }
+</style>
+<link rel="alternate" hreflang="en" href="https://www.newsgator.app/index.html" />
+<link rel="alternate" hreflang="fr" href="https://www.newsgator.app/index-fr.html" />
+<link rel="alternate" hreflang="de" href="https://www.newsgator.app/index-de.html" />
+<link rel="alternate" hreflang="es" href="https://www.newsgator.app/index-es.html" />
+<link rel="alternate" hreflang="it" href="https://www.newsgator.app/index-it.html" />
+<link rel="alternate" hreflang="pt" href="https://www.newsgator.app/index-pt.html" />
+<link rel="alternate" hreflang="ja" href="https://www.newsgator.app/index-ja.html" />
+<link rel="alternate" hreflang="ko" href="https://www.newsgator.app/index-ko.html" />
+<link rel="alternate" hreflang="zh-Hans" href="https://www.newsgator.app/index-zh-hans.html" />
+<link rel="alternate" hreflang="zh-Hant" href="https://www.newsgator.app/index-zh-hant.html" />
+<link rel="alternate" hreflang="x-default" href="https://www.newsgator.app/index.html" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "NewsGator", "operatingSystem": "iOS, iPadOS, macOS", "applicationCategory": "NewsApplication", "downloadUrl": "https://apps.apple.com/app/newsgator-news-aggregator/id6816198546", "installUrl": "https://apps.apple.com/app/newsgator-news-aggregator/id6816198546", "url": "https://www.newsgator.app/", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
+</head>
+<body>
+<nav class="site-nav" id="site-nav">
+  <div class="wrap">
+    <a class="brand" href="index-ja.html">
+      <img src="assets/logo.png" alt="NewsGator ロゴ" />
+      <span>NewsGator</span>
+    </a>
+    <div class="nav-links" aria-label="主要ナビゲーション">
+      <a href="#how">仕組み</a>
+      <a href="#modes">2つのエンジン</a>
+      <a href="#features">特長</a>
+      <a href="#screenshots">スクリーンショット</a>
+      <a class="nav-cta" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy reveal">
+          <div class="eyebrow">ニュースアグリゲーター · RSSリーダーだけではありません</div>
+          <h1>出来事ごとに、<br />1つのストーリー。</h1>
+          <p class="lede">
+            NewsGatorは、同じ出来事を報じる記事を<strong>1つの進化するストーリー</strong>にまとめ、
+            新しい事実が加わるたびに中立な要約を更新し、<strong>誇張しない見出し</strong>を付け、
+            もっと読みたいときは<strong>元の出版社</strong>へ戻します。
+          </p>
+          <p class="note">2つのエンジン。Apple Intelligenceで動くネイティブアプリ、または自分で運用するNewsGatorサーバー。</p>
+          <p class="avail">iPhone、iPad、iPhone Duo、Macで利用できます。</p>
+          <div class="actions">
+            <a class="btn store" href="https://apps.apple.com/app/newsgator-news-aggregator/id6816198546" target="_blank" rel="noopener noreferrer" aria-label="App Storeでダウンロード"><img src="assets/badges/app-store-ja.svg" alt="App Storeでダウンロード" height="52" /></a>
+            <a class="btn secondary" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">セルフホスト版サーバーを見る</a>
+          </div>
+        </div>
+
+        <div class="promise-stack reveal">
+          <article class="promise">
+            <div class="k">価値 01</div>
+            <h3>まとまって、しかも最新</h3>
+            <p>重複する記事は1つのストーリーになります。新しい事実が届くと要約をその場で磨き直し、読んだストーリーは未読に戻さず<strong>更新あり</strong>で知らせます。</p>
+          </article>
+          <article class="promise">
+            <div class="k">価値 02</div>
+            <h3>誇張しない見出し</h3>
+            <p>各ストーリーには、クリックを誘うためではなく、何が起きたかをそのまま伝える現実的で事実ベースの見出しを付けます。</p>
+          </article>
+          <article class="promise">
+            <div class="k">価値 03</div>
+            <h3>元記事を読み、書き手を支援</h3>
+            <p>要約は仕分けのための道具です。1回のタップで元の出版社を開けるので、訪問、購読、広告表示は実際に取材したジャーナリストへ届きます。</p>
+          </article>
+        </div>
+      </div>
+
+      <div class="fact-strip reveal">
+        <ul>
+          <li><strong>スタンドアロン:</strong> Apple Intelligence、iCloud同期、サーバー不要。無料で試せて、Proは任意です。</li>
+          <li><strong>セルフホスト:</strong> Python/FastAPI + SvelteKit。好きなOpenAI互換AIを選べます。</li>
+          <li><strong>プライバシー:</strong> 広告なし、サードパーティトラッカーなし、分析なし。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">仕組み</div>
+        <h2>ニュースの洪水を、3ステップで整理。</h2>
+        <p class="sub">NewsGatorは、多くのソースを追いたいけれど同じニュースを何度も読みたくない人のために作られています。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="card reveal">
+          <div class="step-num">01</div>
+          <h3>ソースを追加</h3>
+          <p>RSSフィード、IMAPニュースレター、FreshRSS・Miniflux・Inoreaderのような同期リーダーアカウントを取り込めます。OPML読み込みで初期設定もすぐ終わります。</p>
+        </article>
+        <article class="card reveal">
+          <div class="step-num">02</div>
+          <h3>NewsGatorが出来事を束ねる</h3>
+          <p>本文を取得し、同じ現実の出来事に関する記事をクラスタリングし、中立な要約を書き、事実ベースの見出しを付けます。</p>
+        </article>
+        <article class="card reveal">
+          <div class="step-num">03</div>
+          <h3>まず把握して、必要なら深掘り</h3>
+          <p>最初に短いストーリーで全体をつかみ、必要なときだけ出版社を開き、あとでアーカイブに質問したり、ストーリーを共有したり、整理済みのRSSフィードを追えます。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="modes">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">2つの使い方</div>
+        <h2>同じ発想を、まったく違う2つのエンジンで。</h2>
+        <p class="sub">Appleデバイスだけで完結させることも、家庭向けに本格的なセルフホスト環境を動かすこともできます。</p>
+      </div>
+
+      <div class="modes">
+        <article class="engine featured reveal">
+          <div class="mini-label">スタンドアロンのネイティブアプリ</div>
+          <h3>Apple Intelligenceで、サーバー不要</h3>
+          <p>iPhone、iPad、Mac向けのネイティブアプリです。まずApple Private Cloud Compute、次にオンデバイスモデルを使います。ライブラリと既読状態はiCloudで同期されます。</p>
+          <ul>
+            <li>運用するサーバーは不要。お試し期間と1日の無料枠で無料で使え、NewsGator Proで無制限の処理、Listen、ウィジェットが使えます。</li>
+            <li>英語、フランス語、ドイツ語、スペイン語、イタリア語、ポルトガル語、日本語、韓国語、簡体字中国語、繁体字中国語で利用できます。</li>
+            <li>Siriとショートカットに対応し、保存や読書フローをすばやく進められます。</li>
+            <li>ストーリーを音声で、車の中でも：デバイス上の自然な音声とCarPlay。</li>
+            <li>同じストーリーモデル: 1つの出来事、1つの進化するストーリー。</li>
+          </ul>
+        </article>
+
+        <article class="engine reveal">
+          <div class="mini-label">セルフホストのサーバー</div>
+          <h3>Python、FastAPI、SvelteKit、そして自分のAI</h3>
+          <p>NewsGatorサーバーを自分で動かし、好みのOpenAI互換AIにつなげられます。oMLX、Ollama、llama.cpp、LM Studio、そのほか互換エンドポイントに対応します。</p>
+          <ul>
+            <li>ユーザーごとのフィード、既読状態、設定を持つマルチユーザー環境。</li>
+            <li>Webアプリ + PWA、アーカイブチャット、ストーリー共有、ストーリーRSSフィード、アクティビティ追跡。</li>
+            <li>RSS、IMAPニュースレター、FreshRSS / Miniflux / Inoreader系のリーダー同期に対応。</li>
+            <li>ネイティブアプリはサーバーモードで自分のサーバーに接続できます。無料で使え、Proが必要なのはListenとウィジェットだけです。</li>
+          </ul>
+          <div class="code-note"><span class="muted"># 最小構成の Docker セットアップ</span><br />git clone …/NewsGator &amp;&amp; cd docker<br />cp .env.example .env<br />docker compose up --build</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">コンパクトな特長一覧</div>
+        <h2>実際によく使う機能だけを。</h2>
+        
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature reveal">
+          <h3>ListenとCarPlay</h3>
+          <p>最初の未読ストーリーから始まる音声キュー。自然な音声はすべてデバイス上で動作します。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>アーカイブチャット</h3>
+          <p>ストーリーアーカイブに質問すると、根拠付きで答えます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>ニュースレター対応</h3>
+          <p>IMAPニュースレターも、フィードと同じストーリーパイプラインに入ります。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>リーダー同期</h3>
+          <p>FreshRSS、Miniflux、Inoreader互換アカウントを接続できます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>未読ではなく更新</h3>
+          <p>新しい事実が加わっても、既読状態は正直なままです。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>OPML対応</h3>
+          <p>ライブラリを一から作り直さなくても、フィード一覧を読み込み・書き出しできます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>ストーリー共有</h3>
+          <p>ストーリー要約を共有しても、元の記事へまっすぐリンクできます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>ストーリーRSSフィード</h3>
+          <p>整理済みのストーリーアーカイブ自体を、任意のRSSリーダーで購読できます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>マルチユーザーサーバー</h3>
+          <p>1つのセルフホスト環境で、家族みんなが別々のアカウントとして使えます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>ウィジェット</h3>
+          <p>ホーム画面、ロック画面、Macのウィジェットで、最新のストーリーをひと目で確認(Pro)。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>フィード探索</h3>
+          <p>国やトピックから良質な情報源を見つけたり、AIに探してもらったりできます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>保存したストーリー</h3>
+          <p>星を付けたストーリーは保持され、自動で削除されません。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>翻訳</h3>
+          <p>すべてのストーリーを自分の言語で。必要に応じて翻訳し、キャッシュします。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>iCloudですべてのデバイスに</h3>
+          <p>ライブラリと既読状態がiPhone、iPad、Macで同期。対応デバイスが他のデバイスの分も処理できます。</p>
+        </article>
+        <article class="feature reveal">
+          <h3>アプリ内ヘルプ</h3>
+          <p>チャットにアプリの使い方を質問できます。回答は内蔵ドキュメントをもとに、デバイス上で生成されます。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="video">
+    <link rel="stylesheet" href="assets/video.css" />
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">動画</div>
+        <h2>NewsGatorの実際の動き。</h2>
+        <p class="sub">アプリをざっと紹介します。</p>
+      </div>
+      <div class="video-frame reveal">
+        <video controls playsinline preload="none" poster="assets/video/poster.jpg" src="assets/video/newsgator-demo.mp4"></video>
+      </div>
+      <p class="video-note">その他の動画は<a href="https://www.youtube.com/@NewsGatorApp" rel="noopener">YouTubeチャンネル</a>で。</p>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <div class="wrap">
+      <div class="section-head gallery-intro reveal">
+        <div class="eyebrow">スクリーンショット</div>
+        <h2>マーケティング用モックではなく、実際のネイティブアプリ画面です。</h2>
+        <p class="sub">iPhone、iPad、iPhone Duo、Macのアプリと、セルフホスト版サーバーのWebアプリから撮った最新の画面です。</p>
+      </div>
+
+      <div class="gallery">
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-mac-stories.webp" alt="NewsGatorの一覧で、出来事ごとに1枚のカードが並ぶMacのストーリー表示" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Macでストーリーを仕分け</strong>
+            <span class="caption">1枚のカードに1つの出来事。事実ベースの見出し、ソース数、カテゴリ、更新状態をまとめて確認できます。</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-mac-detail.webp" alt="要約されたストーリーの横に元の出版社ページが開いているMacのストーリー詳細画面" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>元記事を読む</strong>
+            <span class="caption">要約は入口です。記事全文を読む場所は、あくまで元の出版社です。</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-iphone-stories.webp" alt="スワイプ中心ですばやくニュースを仕分けできるiPhoneのストーリーカード表示" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>iPhoneで素早く仕分け</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-iphone-listen.webp" alt="車の中でも聴ける" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>車の中でも聴ける</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-iphone-widgets.webp" alt="あらゆる画面でウィジェット" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>あらゆる画面でウィジェット</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-duo-stories.webp" alt="折りたたみiPhoneに対応" width="900" height="1310" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>折りたたみiPhoneに対応</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-mac-discovery.webp" alt="新しいフィードを探す" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>新しいフィードを探す</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-mac-chat.webp" alt="アーカイブに質問" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>アーカイブに質問</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-mac-activity.webp" alt="NewsGatorの処理パイプラインとApple Intelligenceの進行状況を表示するMacのアクティビティ画面" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>見える処理状況</strong>
+            <span class="caption">アプリが何をしているかを推測するのではなく、処理、デバイス、ストーリーパイプラインの進み具合を確認できます。</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/ja-ipad-stories.webp" alt="iPad向けに最適化" width="1000" height="1334" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>iPad向けに最適化</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot full reveal">
+          <div class="shot-media">
+            <img src="assets/shots/app-web-usage.jpg" alt="トークン合計、1日あたりの使用量、処理段階ごとの内訳を表示するサーバーWebアプリのLLM使用量ページ" width="1010" height="1130" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>AIコストを把握</strong>
+            <span class="caption">自分のサーバーなら、1日ごと・段階ごと・モデルごとのトークン使用量を見て、実際の利用にもとづいてプロバイダーを比較できます。</span>
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-block">
+    <div class="wrap reveal">
+      <div class="eyebrow">オープンソース</div>
+      <h2>重複ノイズを減らし、必要な情報を増やす。</h2>
+      <p class="sub">NewsGatorは、何を読む価値があるかを判断する手助けをしたら、あとは邪魔をしません。広告なし、サードパーティトラッカーなし、分析なし。</p>
+      <div class="actions" style="justify-content:center;">
+        <a class="btn store" href="https://apps.apple.com/app/newsgator-news-aggregator/id6816198546" target="_blank" rel="noopener noreferrer" aria-label="App Storeでダウンロード"><img src="assets/badges/app-store-ja.svg" alt="App Storeでダウンロード" height="52" /></a>
+        <a class="btn secondary" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">サーバーのリポジトリ</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap footer-grid">
+    <div class="footer-note">
+      <strong>NewsGator</strong> — タブを減らし、読む判断を良くしたい人のためのニュースアグリゲーター。
+    </div>
+    <div class="footer-links">
+      <a href="support-ja.html">サポート</a>
+      <a href="privacypolicy.html">プライバシーポリシー</a>
+      <a href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">サーバー GitHub</a>
+      <a href="https://github.com/Tekka90/Newsgator-Apple" target="_blank" rel="noopener noreferrer">ネイティブアプリ GitHub</a>
+    </div>
+  </div>
+  <div class="wrap"><div class="langs"><a href="index.html" hreflang="en">English</a> <a href="index-fr.html" hreflang="fr">Français</a> <a href="index-de.html" hreflang="de">Deutsch</a> <a href="index-es.html" hreflang="es">Español</a> <a href="index-it.html" hreflang="it">Italiano</a> <a href="index-pt.html" hreflang="pt">Português</a> <span class="current">日本語</span> <a href="index-ko.html" hreflang="ko">한국어</a> <a href="index-zh-hans.html" hreflang="zh-Hans">简体中文</a> <a href="index-zh-hant.html" hreflang="zh-Hant">繁體中文</a></div></div>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="スクリーンショットビューア" hidden>
+  <button class="lb-close" aria-label="閉じる">&times;</button>
+  <button class="lb-prev" aria-label="前のスクリーンショット">&#8249;</button>
+  <img alt="" />
+  <div class="lb-caption"></div>
+  <button class="lb-next" aria-label="次のスクリーンショット">&#8250;</button>
+</div>
+
+<script>
+const nav = document.getElementById('site-nav');
+const updateNav = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+updateNav();
+window.addEventListener('scroll', updateNav, { passive: true });
+
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!reduced && 'IntersectionObserver' in window) {
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('in');
+      observer.unobserve(entry.target);
+    }
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+} else {
+  document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+}
+const lightbox = document.getElementById('lightbox');
+const lbImg = lightbox.querySelector('img');
+const lbCaption = lightbox.querySelector('.lb-caption');
+const shots = [...document.querySelectorAll('.shot')];
+let current = 0;
+const show = (i) => {
+  current = (i + shots.length) % shots.length;
+  const img = shots[current].querySelector('img');
+  lbImg.src = img.src;
+  lbImg.alt = img.alt;
+  lbCaption.textContent = shots[current].querySelector('strong').textContent;
+};
+const openBox = (i) => { show(i); lightbox.hidden = false; lightbox.classList.add('open'); document.body.style.overflow = 'hidden'; lightbox.querySelector('.lb-close').focus(); };
+const closeBox = () => { lightbox.classList.remove('open'); lightbox.hidden = true; document.body.style.overflow = ''; };
+shots.forEach((shot, i) => shot.querySelector('.shot-media').addEventListener('click', () => openBox(i)));
+lightbox.querySelector('.lb-close').addEventListener('click', closeBox);
+lightbox.querySelector('.lb-prev').addEventListener('click', (e) => { e.stopPropagation(); show(current - 1); });
+lightbox.querySelector('.lb-next').addEventListener('click', (e) => { e.stopPropagation(); show(current + 1); });
+lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeBox(); });
+document.addEventListener('keydown', (e) => {
+  if (lightbox.hidden) return;
+  if (e.key === 'Escape') closeBox();
+  else if (e.key === 'ArrowLeft') show(current - 1);
+  else if (e.key === 'ArrowRight') show(current + 1);
+});
+</script>
+</body>
+</html>

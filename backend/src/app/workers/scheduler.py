@@ -38,6 +38,13 @@ async def mail_poll_sweep() -> None:
     await poll_all_accounts()
 
 
+async def reader_poll_sweep() -> None:
+    """Poll every enabled third-party reader account (SPEC §9, Google Reader API)."""
+    from app.services.readers.sync import poll_all_reader_accounts
+
+    await poll_all_reader_accounts()
+
+
 async def freeze_sweep() -> None:
     """Hourly: freeze stories past the freeze window + prune the activity ring buffer."""
     async for session in get_session():
@@ -48,11 +55,11 @@ async def freeze_sweep() -> None:
 
 
 async def llm_backlog_sweep() -> None:
-    """Requeue articles stuck in 'fulltext' (LLM failure, lost queue item).
+    """Requeue unclustered articles stuck mid-pipeline (LLM failure, crash recovery).
 
-    Self-healing counterpart to the startup requeue (invariant 7): summarize
-    failures leave the state at 'fulltext' precisely so this sweep retries them.
-    Idempotent — `process_article` no-ops unless the state is still 'fulltext'.
+    Self-healing counterpart to the startup requeue (invariant 7): sweeps articles
+    in 'fetched', 'fulltext', 'summarized', or 'embedded' so they resume gracefully.
+    Idempotent — `process_article` no-ops if an article is already 'clustered'.
     """
     from app.services.process import enqueue_backlog
 
@@ -94,6 +101,14 @@ def start_scheduler() -> None:
         trigger="interval",
         minutes=settings.mail_poll_minutes,
         id="mail_poll_sweep",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        reader_poll_sweep,
+        trigger="interval",
+        minutes=settings.reader_poll_minutes,
+        id="reader_poll_sweep",
         max_instances=1,
         coalesce=True,
     )

@@ -5,8 +5,8 @@ events and persists article state immediately.
 """
 
 import asyncio
+import calendar
 import re
-import time
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_session
 from app.models import Article, Feed
-from app.services import activity
+from app.services import activity, youtube
 from app.services.fulltext import fetch_full_text
 
 TRACKING_PARAMS_PREFIXES = ("utm_",)
@@ -46,8 +46,42 @@ def parse_opml(content: bytes) -> list[tuple[str, str]]:
     return feeds
 
 
+def render_opml(feeds: list[Feed]) -> str:
+    """Render RSS-kind feeds as an OPML 2.0 subscription list (mirrors parse_opml).
+
+    Mail feeds are excluded — their pseudo-URL (`newsletter:{sender_email}`) is
+    not a fetchable feed URL, so re-importing it elsewhere would be meaningless.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.Element("opml", version="2.0")
+    head = ET.SubElement(root, "head")
+    ET.SubElement(head, "title").text = "NewsGator subscriptions"
+    body = ET.SubElement(root, "body")
+    for feed in feeds:
+        if feed.kind != "rss":
+            continue
+        title = feed.title or feed.url
+        ET.SubElement(
+            body,
+            "outline",
+            text=title,
+            title=title,
+            type="rss",
+            xmlUrl=feed.url,
+        )
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
+
+
 def canonicalize_url(url: str) -> str:
-    """Strip tracking params and normalize — used for cross-feed dedupe (SPEC §9)."""
+    """Strip tracking params and normalize — used for cross-feed dedupe (SPEC §9).
+
+    Any YouTube video URL (watch, youtu.be, /shorts, /live, /embed, m./music.) collapses to
+    `https://www.youtube.com/watch?v=<id>`; `si`, `t`, `list`, … are dropped (YOUTUBE_PLAN 3.4).
+    """
+    video_url = youtube.canonical_url(url)
+    if video_url:
+        return video_url
     parts = urlparse(url)
     query = [
         (k, v)
@@ -92,10 +126,10 @@ def _entry_published(entry: feedparser.FeedParserDict) -> datetime | None:
                 dt = parsedate_to_datetime(raw)
                 return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
             except (TypeError, ValueError):
-                continue
+                pass  # ISO 8601 (Atom) — fall through to feedparser's parsed struct
         struct = entry.get(f"{key}_parsed")
         if struct:
-            return datetime.fromtimestamp(time.mktime(struct), tz=UTC)
+            return datetime.fromtimestamp(calendar.timegm(struct), tz=UTC)
     return None
 
 
@@ -135,19 +169,14 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-def _inline_image(entry: feedparser.FeedParserDict) -> str | None:
-    """First real <img src> in the entry's HTML content/summary.
+def inline_image_from_html(html: str, base: str = "") -> str | None:
+    """First real <img src> in HTML.
 
     Skips data: URIs, 1x1 tracking pixels, emoji/smiley sprites, and lazy-load
     placeholders (e.g. PlayStation Blog ships src="placeholder.svg" with the
     real URL in data-src — which feedparser's sanitizer strips — so the entry
     counts as image-less and fulltext's og:image recovery takes over).
     """
-    html = ""
-    if entry.get("content"):
-        html = str(entry.content[0].get("value", ""))
-    elif entry.get("summary"):
-        html = str(entry.summary)
     for match in _IMG_SRC_RE.finditer(html):
         src, tag = match.group(1), match.group(0)
         if src.startswith(("data:", "//feedsportal.com", "//feedburner.com")):
@@ -160,9 +189,18 @@ def _inline_image(entry: feedparser.FeedParserDict) -> str | None:
             return "https:" + src
         if src.startswith(("http://", "https://")):
             return src
-        base = str(entry.get("link", ""))
         return urljoin(base, src) if base else None
     return None
+
+
+def _inline_image(entry: feedparser.FeedParserDict) -> str | None:
+    """First real <img src> in the entry's HTML content/summary."""
+    html = ""
+    if entry.get("content"):
+        html = str(entry.content[0].get("value", ""))
+    elif entry.get("summary"):
+        html = str(entry.summary)
+    return inline_image_from_html(html, str(entry.get("link", "")))
 
 
 def effective_interval_min(feed: Feed) -> int:
@@ -390,7 +428,8 @@ def poll_feeds_background(feed_ids: list[int]) -> None:
     """
     if not feed_ids or settings.environment == "test":
         return
-    task = asyncio.create_task(poll_feeds_by_id(feed_ids))
+    unique_ids = list(dict.fromkeys(feed_ids))
+    task = asyncio.create_task(poll_feeds_by_id(unique_ids))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 

@@ -5,7 +5,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_user
-from app.api.schemas import AuthOut, LoginIn, MePatch, SetupIn, UserOut
+from app.api.schemas import (
+    AuthOut,
+    CategoryInterestsIn,
+    CategoryInterestsOut,
+    LoginIn,
+    MePatch,
+    SetupIn,
+    UserOut,
+)
 from app.core.db import get_session
 from app.core.security import (
     SESSION_COOKIE,
@@ -14,7 +22,7 @@ from app.core.security import (
     parse_session_token,
     verify_password,
 )
-from app.models import User
+from app.models import Category, Feed, User, UserFeed
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,6 +46,11 @@ async def setup(
         is_admin=True,
     )
     session.add(user)
+    await session.flush()
+    # Subscribe the initial admin to all pre-existing feeds
+    feed_ids = (await session.scalars(select(Feed.id))).all()
+    for fid in feed_ids:
+        session.add(UserFeed(user_id=user.id, feed_id=fid))
     await session.commit()
     await session.refresh(user)
     return _auth_response(response, user)
@@ -97,6 +110,28 @@ async def session_debug(request: Request) -> dict[str, object]:
     }
 
 
+@router.get("/me/category-interests")
+async def get_category_interests(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CategoryInterestsOut:
+    categories = (await session.scalars(select(Category.name).order_by(Category.name))).all()
+    return CategoryInterestsOut(
+        category_interests=user.category_interests or [], categories=list(categories)
+    )
+
+
+@router.put("/me/category-interests")
+async def put_category_interests(
+    body: CategoryInterestsIn,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CategoryInterestsOut:
+    user.category_interests = body.category_interests
+    await session.commit()
+    return CategoryInterestsOut(category_interests=user.category_interests or [])
+
+
 @router.patch("/me")
 async def patch_me(
     body: MePatch,
@@ -105,6 +140,10 @@ async def patch_me(
 ) -> UserOut:
     if body.summary_language is not None:
         user.summary_language = body.summary_language
+        if body.summary_language:
+            from app.services.translation import prewarm_user_stories
+
+            await prewarm_user_stories(session, user.id, body.summary_language)
     if body.story_sort is not None:
         user.story_sort = body.story_sort
     if body.story_order is not None:

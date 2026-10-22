@@ -212,6 +212,46 @@ config validated; image build is the one step to run on the target machine)
   URL-set validation), `article.newsletter_intro` preferred for new-story summaries.
   API `/api/mail-accounts` (+ test/poll), scheduler `mail_poll_sweep`, GUI Settings
   card + Feeds-page ✉ badge.
+- OPML export ✅ (2026-09-14): `GET /api/feeds/export-opml` (admin), mirrors the
+  existing importer (`services/ingest.py::render_opml()`); Feeds page "Export OPML"
+  button.
+- Feed email counter ✅ (2026-09-14): `feed.email_count` (Alembic 0013) — mail feeds
+  only, incremented once per newsletter message processed; surfaced on `GET
+  /api/feeds` + the Feeds page, to help spot a stalled newsletter feed.
+- Category suggestions ✅ (2026-09-14): the summarize LLM call may propose a new
+  category when none of the taxonomy fits well (`prompts.summarize_article`);
+  logged per-article, never auto-applied (Alembic 0014, `category_suggestion` +
+  `category_proposal_dismissal`, `services/category_suggestions.py`). Admin sees
+  recurring proposals (exact-ish grouping, not semantic) on the Settings page next
+  to the taxonomy editor: `GET /api/categories/suggestions`, `POST
+  /api/categories/suggestions/{accept,dismiss}`. Config
+  `CATEGORY_SUGGESTIONS_ENABLED`/`CATEGORY_SUGGESTION_MIN_ARTICLES`/
+  `CATEGORY_SUGGESTION_WINDOW_DAYS` (whitelisted).
+- Third-party RSS Reader API integration (Google Reader API compatible) ⏳ (2026-09-23):
+  per-user reader accounts (Alembic 0015 `reader_account`, `feed.kind = 'reader_api'`,
+  `article.origin_feed_title`, `services/readers/greader.py`, `services/readers/sync.py`),
+  aggregated virtual feed per connected account (`reader:{provider}:{account_id}`),
+  canonical publisher URL extraction + original publisher favicons, origin feed title
+  tracking, individual article processing through the standard pipeline, bidirectional
+  read-state synchronization (outbound push on story read/unread; inbound sync marking
+  single-source stories read or multi-source stories "Updated"). API `/api/reader-accounts`
+  (+ test/poll), scheduler `reader_poll_sweep`, GUI Settings card + Feeds-page badge.
+- Multi-language story summary translations ✅ (2026-09-23): per-user summary language
+  translations (Alembic 0017 `story_translation` table, Alembic 0018 `story.language`,
+  `services/translation.py`). Summaries and headlines are generated in the article's
+  source language to avoid translation-of-translation degradation. Users setting a custom
+  `summary_language` (or viewing foreign stories under the server default language) receive
+  translated headline and summary on `GET /api/stories`, `GET /api/stories/{id}`, and
+  `GET /api/feed.xml`. Background pre-warming worker translates stories on creation/version
+  bump and user language change; JIT fallback on story detail.
+- Per-user saved stories ✅ (2026-09-30): `story_state.saved_at` (Alembic 0019) stores
+  a save/unsave flag orthogonal to read state. API: `PUT/DELETE /api/stories/{id}/saved`
+  returns `{saved, saved_at}`, `GET /api/stories?saved=true` composes with the existing
+  story filters, and story list/detail payloads now include `saved` + `saved_at`. Saved
+  stories are exempt from retention purging (including member articles/revisions/vectors).
+  Web GUI: star toggles in the story list and detail page, a Saved filter pill, and a
+  swipe-down save gesture in the mobile deck.
+
 
 ---
 
