@@ -1,132 +1,27 @@
 # Sift
 
-Sift is a customized fork of the open-source [NewsGator](https://github.com/Tekka90/NewsGator)
-project. It retains the upstream application and adds local customizations.
+Sift is a self-hosted AI news intelligence platform built on NewsGator. It adds personalized headline filtering and relevance-aware article processing to help users focus on news that matters to them.
 
-Current Sift version: `0.1.0`
+## What makes Sift different
 
-Integrated upstream NewsGator version: `1.6.0`
+- **Per-user interests:** Users select the categories they care about. Those interests guide which shared articles continue through processing.
+- **Early headline screening:** Sift classifies headlines before retrieving full text. Articles clearly outside the effective interest scope can be filtered before more expensive processing begins.
+- **Safe handling of ambiguity:** When a headline is ambiguous, Sift assigns the `Uncertain` fallback and continues to full-text processing instead of discarding the article early.
+- **Body classification remains authoritative:** After retrieval, Sift classifies the article body. An out-of-scope body category is filtered before embeddings and clustering, even if the headline passed screening.
+- **Visible, persistent filtering:** Filtered articles keep a persistent `filtered` state, and filtering outcomes appear in the Activity pipeline.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Together, these stages reduce unnecessary full-text retrieval, summarization, and embedding while keeping ambiguous stories eligible for a more informed decision.
 
-Self-hosted, multi-user news aggregator that clusters every article about the same
-real-world event into one living **Story** — neutral summary, honest clickbait-free
-title, and a link back to the original publishers — using an external
-OpenAI-compatible LLM.
+## Versioning
 
-The server comes with a web app (desktop + touch-first mobile deck, installable PWA).
-Official native iOS/macOS apps are also available, either as clients of this server or
-as standalone apps, but they are optional: the web app is fully usable on its own.
+Sift versions are independent from upstream NewsGator versions. The initial Sift release is **0.1.0**, based on **NewsGator 1.6.0**. Sift releases advance the Sift version; the recorded upstream version changes only when a newer NewsGator release is integrated. The authoritative values live in `backend/src/app/SIFT_VERSION` and `backend/src/app/NEWSGATOR_UPSTREAM_VERSION` and are reported by the application.
 
-🌐 **[Project page](https://www.newsgator.app/)** — why it exists, the
-philosophy behind it, and how it feels to use.
+## Upstream project and attribution
 
-## Features
+Sift is based on the open-source [NewsGator project by Tekka90](https://github.com/Tekka90/NewsGator). The original project retains its applicable license and attribution; see [LICENSE](LICENSE).
 
-- **Stories, not article lists** — articles are ingested, full-text fetched
-  (trafilatura + readability fallback), summarized in your language, embedded, and
-  clustered into Stories with a merged summary and a factual title that version as
-  new facts arrive.
-- **Three ingestion channels** — RSS feeds, IMAP newsletters (below), and
-  third-party reader accounts through the Google Reader API (FreshRSS, Miniflux,
-  Inoreader, The Old Reader, BazQux) with bidirectional read-state sync.
-- **Newsletters are feeds too** — point a per-user IMAP account + folder at your
-  newsletter mailbox (Settings) and every sender becomes a feed: article links are
-  extracted from each message (code-first parsing, then two LLM passes — one
-  deletes the intro/socials/sponsor chrome from the full email using placeholder
-  link tokens, one recovers the human-written intro text per surviving link),
-  then processed like any RSS entry. New stories show
-  the newsletter's own intro instead of the machine summary, and the article's
-  publication date comes from the linked page's explicit metadata
-  (og/JSON-LD) when it exists — otherwise the email's date (never guessed from
-  URLs or copyright lines).
-- **Your LLM, your data** — works with any OpenAI-compatible server (oMLX, Ollama,
-  llama.cpp, LM Studio…). Nothing is hardcoded to a provider; articles never leave
-  infrastructure you chose.
-- **Multi-user with per-user read state** — read stories that receive new facts come
-  back as "updated", never as unread noise. Filter the story list by feed, and see
-  per-feed story/unread counts on the Feeds page.
-- **Ask your archive** — a built-in chatbot answers questions across everything
-  you've loaded (RAG): your question is embedded and matched against story
-  centroids, the top story summaries ground the answer, and cited stories are
-  rendered as clickable cards. History is stored per user, so it follows you
-  across devices.
-- **Full visibility** — live activity stream (SSE) for every pipeline stage, a live
-  LLM interaction trace (see each prompt and its reply as it happens), and LLM
-  token-usage metrics per day/stage/model/feed with a price playground.
-- **Quality-of-life** — PWA (installable, works on iOS), dark mode, mobile swipe
-  deck, OPML import/export, YouTube channels as feeds (transcripts summarised; Takeout `subscriptions.csv` import), categories, favicons (feed icons included — with homepage `<link rel=icon>`
-  and parent-domain fallback for newsletter sender domains), story sharing with
-  on-demand translation, your Stories re-exposed as an RSS feed
-  (`GET /api/feed.xml`), optional Readeck integration.
-- **Simple to run** — one Docker container, SQLite by default (sqlite-vec for
-  vectors), optional external Qdrant.
+For general platform features, installation instructions, architecture, and the original documentation, refer to [NewsGator](https://github.com/Tekka90/NewsGator).
 
-| Mac — Stories | iPhone — Stories | Mac — Story detail |
-| --- | --- | --- |
-| ![Mac stories view](docs/assets/shots/app-mac-stories.jpg) | ![iPhone stories view](docs/assets/shots/app-iphone-stories.jpg) | ![Mac story detail](docs/assets/shots/app-mac-story-detail.jpg) |
+## Development and maintenance
 
-| Mac — Activity | Web app — LLM usage |
-| --- | --- |
-| ![Mac activity view](docs/assets/shots/app-mac-activity.jpg) | ![Web app LLM usage](docs/assets/shots/app-web-usage.jpg) |
-
-See [SPEC.md](SPEC.md) for the normative spec and
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the milestone checklist.
-
-## Apple apps (optional)
-
-Official native iOS/macOS apps exist for NewsGator. They can connect to this server,
-but they are not required: everything the server offers is available in the web app.
-In the web app, source articles open on the publisher's site in a new browser tab,
-because most publishers block embedding via `X-Frame-Options` / CSP `frame-ancestors`.
-
-## Docker (production)
-
-Using the official image:
-
-```bash
-cd docker
-cp .env.example .env   # set SECRET_KEY + LLM_BASE_URL for your LLM server
-docker compose up
-```
-
-Or build from source: in `docker/docker-compose.yml`, comment out `image:` and
-uncomment the `build:` section, then run `docker compose up --build`.
-
-Then open http://localhost:3000 — first run asks you to create the admin account.
-The LLM is an external OpenAI-compatible server (oMLX, Ollama, llama.cpp, LM Studio…);
-point `LLM_BASE_URL` at it. Qdrant is optional and external (`VECTOR_BACKEND=qdrant`
-+ `QDRANT_URL`) — never spun up by this project.
-
-## Development quickstart
-
-```bash
-# Backend (http://localhost:8000, OpenAPI docs at /docs)
-cd backend
-pip install -e '.[dev]'
-uvicorn app.main:app --reload
-
-# Frontend (http://localhost:5173, proxies /api to :8000)
-cd frontend
-npm install
-npm run dev
-```
-
-First run: open the GUI → you'll be redirected to create the admin account, then add
-feeds on the Feeds page.
-
-## Tests & checks
-
-```bash
-cd backend && pytest && ruff check src tests && mypy src
-cd frontend && npm run check && npm run build
-```
-
-## Contributing & security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and ground rules,
-and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
-
-## License
-
-[MIT](LICENSE)
+Sift keeps its customizations in Git alongside the upstream history. Upstream releases are reviewed and integrated into Sift while preserving Sift-specific changes. Release tags use Sift's version; the upstream version records the latest integrated NewsGator release.
