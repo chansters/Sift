@@ -15,7 +15,7 @@ The current implementation includes:
 - Activity-page visibility for recent `classify` LLM calls;
 - 47 passing targeted backend tests, passing Ruff checks, and a successful Docker build.
 
-The clean test environment is active on Snorlax. It currently has one admin account and no feeds, articles, or stories until a test feed is added.
+The clean test environment is active on the test server. It currently has one admin account and no feeds, articles, or stories until a test feed is added.
 
 ## Purpose
 

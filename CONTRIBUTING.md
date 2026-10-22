@@ -52,3 +52,16 @@ cd frontend && npm run check && npm run build
 Open an issue with: what you did, what you expected, what happened, and the relevant
 `ACTIVITY_LOG` entries (Activity page in the GUI). For security issues, see
 [SECURITY.md](SECURITY.md) — do not open a public issue.
+
+## Security hygiene
+
+- Never commit real credentials or production `.env` files. Keep deployment secrets and runtime databases outside Git, and use placeholder values in example configuration.
+- Before committing and before each public release, scan the complete Git history from the repository root:
+
+  ```sh
+  docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --log-opts=--all --redact --no-banner
+  ```
+
+  The GitHub Actions workflow runs the same scan on pushes to `main` and pull requests. A finding fails the scan; never copy a detected value into logs or reports.
+- Review release files and assets before publication. Treat credentials found anywhere in public Git history as compromised until revoked or rotated, even if later removed.
+- `.gitignore` helps prevent accidental additions, but it does not protect files already tracked or remove data from historical commits.
