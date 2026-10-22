@@ -1,19 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { api, faviconUrl } from '$lib/api';
+  import { api, faviconUrl, imageSrc } from '$lib/api';
   import { currentUser } from '$lib/stores';
+  import YouTubePlayer from '$lib/components/YouTubePlayer.svelte';
   import ReadeckIcon from '$lib/components/ReadeckIcon.svelte';
   import ShareButton from '$lib/components/ShareButton.svelte';
   import type { Category, FeedOption, StoryListItem } from '$lib/types';
 
   type Sort = 'updated' | 'published' | 'sources';
   type Order = 'asc' | 'desc';
+  type StoryFilter = 'all' | 'unread' | 'updated' | 'saved';
+  const filterPills: StoryFilter[] = ['all', 'unread', 'updated', 'saved'];
 
   let stories = $state<StoryListItem[]>([]);
   let categories = $state<Category[]>([]);
   let feedOptions = $state<FeedOption[]>([]);
-  let filter = $state<'all' | 'unread' | 'updated'>('unread');
+  let filter = $state<StoryFilter>('unread');
   let category = $state('');
   // 0 = all feeds (transient — not a persisted per-user pref)
   let feedId = $state(0);
@@ -29,6 +32,8 @@
   let isMobile = $state(false);
   let readeckEnabled = $state(false);
   let readeckSaving = $state<Record<number, boolean>>({});
+  let saving = $state<Record<number, boolean>>({});
+  let filterCounts = $state<{ all?: number; unread?: number; updated?: number; saved?: number }>({});
   // Sticky title + filter bar — its height is measured at click time so a
   // just-read story can be scrolled out exactly behind it.
   let pagehead = $state<HTMLElement>();
@@ -36,11 +41,14 @@
   // --- swipe deck state (mobile card view) ---
   let index = $state(0);
   let dx = $state(0);
+  let dy = $state(0);
   let snap = $state(false);
   let dragging = $state(false);
   let dragStartX = 0;
   let dragStartY = 0;
-  let horizLock: boolean | null = null;
+  let axisLock: 'x' | 'y' | null = null;
+  let startScrollY = 0;
+  let swipeDownAllowed = false;
 
   let current = $derived(index < stories.length ? stories[index] : null);
   // Past the last card = the "all caught up" end card
@@ -176,9 +184,15 @@
 
   async function load() {
     loading = true;
-    stories = await api.stories.list(filter, category || undefined, sort, order, feedId || undefined);
+    const [fetchedStories, counts] = await Promise.all([
+      api.stories.list(filter, category || undefined, sort, order, feedId || undefined),
+      api.stories.counts(category || undefined, feedId || undefined).catch(() => null)
+    ]);
+    stories = fetchedStories;
+    if (counts && (counts.all > 0 || fetchedStories.length === 0)) filterCounts = counts;
     index = 0;
     dx = 0;
+    dy = 0;
     loading = false;
   }
 
@@ -220,7 +234,7 @@
   function preload(story: StoryListItem | undefined) {
     if (story?.image_url) {
       const img = new Image();
-      img.src = story.image_url;
+      img.src = imageSrc(story.image_url);
     }
   }
 
@@ -255,6 +269,36 @@
     }
   }
 
+  async function toggleSaved(story: StoryListItem, e?: Event) {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (saving[story.id]) return;
+    saving = { ...saving, [story.id]: true };
+    const next = !story.saved;
+    try {
+      const saved = await api.stories.setSaved(story.id, next);
+      story.saved = saved.saved;
+      story.saved_at = saved.saved_at;
+      stories = [...stories];
+      if (filterCounts.saved !== undefined) {
+        filterCounts = {
+          ...filterCounts,
+          saved: Math.max(0, (filterCounts.saved ?? 0) + (saved.saved ? 1 : -1))
+        };
+      }
+      if (filter === 'saved' && !saved.saved) {
+        const removedIndex = stories.findIndex((s) => s.id === story.id);
+        stories = stories.filter((s) => s.id !== story.id);
+        if (removedIndex >= 0 && index > removedIndex) index -= 1;
+        if (index >= stories.length) index = stories.length;
+      }
+    } catch {
+      /* quiet inline toggle */
+    } finally {
+      saving = { ...saving, [story.id]: false };
+    }
+  }
+
   async function markAllRead() {
     const unread = stories.filter((s) => !s.is_read);
     await Promise.all(unread.map((s) => api.stories.read(s.id).catch(() => {})));
@@ -264,33 +308,72 @@
   // --- swipe deck handlers ---
   // Horizontal drag navigates cards; vertical stays native scroll (touch-action: pan-y).
   function onPointerDown(e: PointerEvent) {
+    if ((e.target as Element | null)?.closest('[data-no-swipe]')) return;
     dragging = true;
-    horizLock = null;
+    axisLock = null;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
+    startScrollY = window.scrollY ?? document.documentElement.scrollTop ?? 0;
+    swipeDownAllowed =
+      (e.target as Element | null)?.closest('a, button, input, select, textarea, .decksummary, [data-no-swipe]') ===
+      null;
   }
 
   function onPointerMove(e: PointerEvent) {
     if (!dragging) return;
     const mx = e.clientX - dragStartX;
     const my = e.clientY - dragStartY;
-    if (horizLock === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) {
-      horizLock = Math.abs(mx) > Math.abs(my);
+    if (axisLock === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) {
+      axisLock = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
     }
-    if (horizLock) dx = mx;
+    if (axisLock === 'x') {
+      dx = mx;
+      dy = 0;
+    } else if (axisLock === 'y' && swipeDownAllowed) {
+      dx = 0;
+      dy = Math.max(my, 0);
+    }
   }
 
   function onPointerUp() {
     if (!dragging) return;
     dragging = false;
-    if (dx <= -80) commit('left');
-    else if (dx >= 80) commit('right');
-    else dx = 0;
-    horizLock = null;
+    if (axisLock === 'x') {
+      if (dx <= -80) commit('left');
+      else if (dx >= 80) commit('right');
+      else dx = 0;
+    } else if (
+      axisLock === 'y' &&
+      swipeDownAllowed &&
+      dy >= 90 &&
+      Math.abs((window.scrollY ?? document.documentElement.scrollTop ?? 0) - startScrollY) < 4
+    ) {
+      commit('down');
+    } else {
+      dx = 0;
+      dy = 0;
+    }
+    axisLock = null;
+    swipeDownAllowed = false;
   }
 
-  function commit(dir: 'left' | 'right') {
+  function commit(dir: 'left' | 'right' | 'down') {
     const story = current;
+    if (dir === 'down') {
+      if (!story) {
+        dy = 0;
+        return;
+      }
+      const bounce = Math.min(Math.max(window.innerHeight * 0.16, 110), 180);
+      dy = bounce;
+      setTimeout(() => {
+        void toggleSaved(story);
+        snap = true;
+        dy = 0;
+        requestAnimationFrame(() => requestAnimationFrame(() => (snap = false)));
+      }, 140);
+      return;
+    }
     // left past the last story lands on the "all caught up" card; right from it comes back
     if (dir === 'left' && atEnd) { dx = 0; return; }
     if (dir === 'right' && index <= 0) { dx = 0; return; }
@@ -308,6 +391,7 @@
       index += dir === 'left' ? 1 : -1;
       snap = true;
       dx = 0;
+      dy = 0;
       requestAnimationFrame(() => requestAnimationFrame(() => (snap = false)));
     }, 220);
   }
@@ -340,12 +424,13 @@
 
   <div class="toolbar card">
     <div class="filters">
-      {#each ['all', 'unread', 'updated'] as f}
+      {#each filterPills as f}
+        {@const count = filterCounts[f]}
         <button
           class:active={filter === f}
           onclick={() => { filter = f as typeof filter; savePrefs(); load(); }}
         >
-          {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Updated'}
+          {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : f === 'updated' ? 'Updated' : 'Saved'}{#if count !== undefined}<span class="pill-count">{count}</span>{/if}
         </button>
       {/each}
     </div>
@@ -440,26 +525,32 @@
   <div class="card"><p>Loading…</p></div>
 {:else if stories.length === 0}
   <div class="card">
-    <p>No stories yet. Add feeds on the <a href="/feeds">Feeds page</a> — articles are
-    clustered into stories automatically once the pipeline runs.</p>
+    <p>
+      {#if filter === 'saved'}
+        No saved stories yet.
+      {:else}
+        No stories yet. Add feeds on the <a href="/feeds">Feeds page</a> — articles are
+        clustered into stories automatically once the pipeline runs.
+      {/if}
+    </p>
   </div>
 {:else if isMobile}
   <!-- Mobile: story deck. Swipe ← marks read and opens the next story; → goes back.
-       Past the last story, a final "all caught up" card closes the deck. -->
+       Swipe ↓ toggles saved; past the last story, a final "all caught up" card closes the deck. -->
   <div class="deckmeta">
     <button class="navbtn" onclick={() => commit('right')} disabled={index === 0}>‹ Prev</button>
     {#if atEnd}
       <span>✓ done</span>
       <span class="hint">swipe → back to stories</span>
     {:else}
-      <span class="hint">swipe ← read &amp; next</span>
+      <span class="hint">swipe ← read &amp; next · ↓ save</span>
     {/if}
     <button class="navbtn" onclick={() => commit('left')} disabled={atEnd}>Next ›</button>
   </div>
   <div
     class="deckviewport"
     role="region"
-    aria-label="Story deck — swipe left to mark read and open the next story"
+    aria-label="Story deck — swipe left to mark read and open the next story, swipe down to save"
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
@@ -469,21 +560,32 @@
       <article
         class="card deckcard"
         class:readcard={current.is_read}
-        style:transform="translateX({dx}px) rotate({dx / 30}deg)"
+        style:transform="translate({dx}px, {dy}px) rotate({dx / 30}deg)"
         style:transition={dragging || snap ? 'none' : 'transform 0.22s ease-out'}
       >
       <div class="row">
         <span class="chip">{current.category}</span>
-        {#if !current.is_read}<span class="badge new">NEW</span>{/if}
+        {#if !current.is_read}<span class="dot" title="Unread story"></span>{/if}
         {#if current.updated_since_read}<span class="badge updated">UPDATED</span>{/if}
+        {#if current.media_kind === 'video'}<span class="badge video">▶ YouTube</span>{/if}
         {#if current.is_frozen}<span class="badge frozen">archived</span>{/if}
         <span class="spacer"></span>
+        <button
+          class="readbtn starbtn"
+          class:active={current.saved}
+          title={current.saved ? 'Saved story — click to remove' : 'Save story'}
+          aria-label={current.saved ? 'Remove saved story' : 'Save story'}
+          onclick={(e) => current && toggleSaved(current, e)}
+          disabled={saving[current.id]}
+        >
+          {#if saving[current.id]}…{:else}★{/if}
+        </button>
         {#if readeckEnabled}
-          {@const saved = Boolean(current.readeck_bookmark_id)}
+          {@const savedToReadeck = Boolean(current.readeck_bookmark_id)}
           <button
             class="readbtn iconbtn"
-            class:saved
-            title={saved ? 'Already saved to Readeck — save again' : 'Save to Readeck'}
+            class:saved={savedToReadeck}
+            title={savedToReadeck ? 'Already saved to Readeck — save again' : 'Save to Readeck'}
             aria-label="Save to Readeck"
             onclick={(e) => current && saveReadeck(current, e)}
             disabled={readeckSaving[current.id]}
@@ -494,12 +596,16 @@
         <ShareButton storyId={current.id} iconOnly buttonClass="readbtn" />
         <span class="age">{ago(current.published_at ?? current.last_updated_at)}</span>
       </div>
-      {#if current.image_url}
+      {#if current.video_id}
+        {#key current.id}
+          <div class="deckvideo"><YouTubePlayer videoId={current.video_id} title={current.title} /></div>
+        {/key}
+      {:else if current.image_url}
         {#key current.id}
           <img
             class="hero"
             class:heroloading={!heroLoaded}
-            src={current.image_url}
+            src={imageSrc(current.image_url)}
             alt=""
             onload={() => (heroLoaded = true)}
             onerror={() => (heroLoaded = true)}
@@ -523,7 +629,7 @@
       <!-- end of deck — the "you're done, go live your life" card -->
       <article
         class="card deckcard donecard"
-        style:transform="translateX({dx}px) rotate({dx / 30}deg)"
+        style:transform="translate({dx}px, {dy}px) rotate({dx / 30}deg)"
         style:transition={dragging || snap ? 'none' : 'transform 0.22s ease-out'}
       >
         <span class="doneemoji">{doneMsg.emoji}</span>
@@ -543,16 +649,27 @@
     <div class="card story" class:read={story.is_read} data-story={story.id}>
       <div class="row">
         <span class="chip">{story.category}</span>
-        {#if !story.is_read}<span class="badge new">NEW</span>{/if}
+        {#if !story.is_read}<span class="dot" title="Unread story"></span>{/if}
         {#if story.updated_since_read}<span class="badge updated">UPDATED</span>{/if}
+        {#if story.media_kind === 'video'}<span class="badge video">▶ YouTube</span>{/if}
         {#if story.is_frozen}<span class="badge frozen">archived</span>{/if}
         <span class="spacer"></span>
+        <button
+          class="readbtn starbtn"
+          class:active={story.saved}
+          title={story.saved ? 'Saved story — click to remove' : 'Save story'}
+          aria-label={story.saved ? 'Remove saved story' : 'Save story'}
+          onclick={(e) => toggleSaved(story, e)}
+          disabled={saving[story.id]}
+        >
+          {#if saving[story.id]}…{:else}★{/if}
+        </button>
         {#if readeckEnabled}
-          {@const saved = Boolean(story.readeck_bookmark_id)}
+          {@const savedToReadeck = Boolean(story.readeck_bookmark_id)}
           <button
             class="readbtn iconbtn"
-            class:saved
-            title={saved ? 'Already saved to Readeck — save again' : 'Save to Readeck'}
+            class:saved={savedToReadeck}
+            title={savedToReadeck ? 'Already saved to Readeck — save again' : 'Save to Readeck'}
             aria-label="Save to Readeck"
             onclick={(e) => saveReadeck(story, e)}
             disabled={readeckSaving[story.id]}
@@ -573,7 +690,7 @@
       <a class="storylink" href="/stories/{story.id}">
         <div class="body">
           {#if story.image_url}
-            <img class="thumb" src={story.image_url} alt="" loading="lazy" />
+            <img class="thumb" src={imageSrc(story.image_url)} alt="" loading="lazy" />
           {/if}
           <div>
             <h2>{story.title}</h2>
@@ -591,6 +708,7 @@
               {/each}
               <span>{story.source_count} source{story.source_count === 1 ? '' : 's'}</span>
               <span>v{story.version}</span>
+              <span class="source-action">Read story &amp; sources →</span>
             </div>
           </div>
         </div>
@@ -600,6 +718,7 @@
 {/if}
 
 <style>
+  .deckvideo { margin: 0.5rem 0; }
   /* Sticky header: the title + filter bar stay put while stories scroll behind.
      top: --nav-h (measured in the layout) keeps it tucked right under the nav.
      z-index 20: above story cards, below the share menu (31) / sheet (40) and
@@ -626,12 +745,48 @@
     .pagehead { margin: -0.8rem -0.6rem 0; padding: 0.8rem 0.6rem 0; }
   }
   .toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-  .filters { display: flex; gap: 0.25rem; flex: 1; min-width: 0; }
-  .filters button {
-    border: 1px solid var(--border-strong); background: var(--surface); color: inherit; border-radius: 999px;
-    padding: 0.25rem 0.9rem;
+  .filters {
+    display: inline-flex;
+    gap: 0.2rem;
+    background: var(--surface-soft);
+    padding: 0.22rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
   }
-  .filters button.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .filters button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    border-radius: var(--radius-pill);
+    padding: 0.25rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .filters button:hover {
+    color: var(--text);
+  }
+  .filters button.active {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(20, 107, 58, 0.22);
+  }
+  .pill-count {
+    font-size: 0.75em;
+    font-weight: 700;
+    opacity: 0.9;
+    background: var(--border);
+    color: var(--text);
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius-pill);
+  }
+  .filters button.active .pill-count {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+  }
   .tools { display: flex; gap: 0.4rem; align-items: center; }
   .tools select { max-width: 10rem; }
   @media (max-width: 700px) {
@@ -687,6 +842,18 @@
   .readbtn:hover { border-color: var(--ok); }
   .story.read .readbtn { color: var(--faint); }
   .iconbtn { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; }
+  .starbtn {
+    color: var(--muted);
+    font-size: 1rem;
+  }
+  .starbtn:hover {
+    border-color: var(--accent-signal);
+    color: var(--accent-signal);
+  }
+  .starbtn.active {
+    color: var(--accent-signal);
+    border-color: var(--accent-signal);
+  }
   /* Already pushed to Readeck — grey it out (still re-clickable to re-save). */
   .readbtn.saved { color: var(--disabled-text); border-color: var(--disabled-bg); opacity: 0.6; }
   .bulkrow { display: flex; justify-content: flex-end; margin-bottom: 0.4rem; }
@@ -694,20 +861,41 @@
     background: none; border: none; color: var(--accent); cursor: pointer;
     font-size: 0.85rem; text-decoration: underline; padding: 0;
   }
-  .story h2 { margin: 0.35rem 0; font-size: 1.15rem; }
+  .story h2 {
+    margin: 0.35rem 0;
+    font-size: 1.25rem;
+    letter-spacing: -0.035em;
+    line-height: 1.2;
+    font-weight: 750;
+  }
+  .source-action {
+    margin-left: auto;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.88rem;
+  }
   .body { display: flex; gap: 0.9rem; align-items: flex-start; }
   .thumb {
     width: 120px; height: 80px; object-fit: cover;
-    border-radius: 6px; flex-shrink: 0;
+    border-radius: var(--radius-sm); flex-shrink: 0;
   }
-  .summary { margin: 0; color: var(--text-secondary); }
-  .row { display: flex; align-items: center; gap: 0.4rem; }
+  .summary { margin: 0; color: var(--text-secondary); line-height: 1.45; }
+  .row { display: flex; align-items: center; gap: 0.45rem; }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-signal);
+    display: inline-block;
+    flex-shrink: 0;
+    box-shadow: 0 0 6px rgba(242, 184, 39, 0.5);
+  }
   .chip {
     font-size: 0.75em; background: var(--chip-bg); color: var(--accent);
-    padding: 0.1rem 0.5rem; border-radius: 999px;
+    font-weight: 600;
+    padding: 0.12rem 0.55rem; border-radius: var(--radius-pill);
   }
-  .badge { font-size: 0.72em; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
-  .badge.new { background: var(--ok-bg); color: var(--ok); }
+  .badge { font-size: 0.72em; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); font-weight: 600; }
   .badge.updated { background: var(--warn-bg); color: var(--warn); }
   .badge.frozen { background: var(--frozen-bg); color: var(--frozen-text); }
   .spacer { flex: 1; }
@@ -751,19 +939,27 @@
     flex-direction: column;
     gap: 0.6rem;
     will-change: transform;
+    border-radius: var(--radius-card);
+    box-shadow: var(--gator-shadow);
   }
   .deckcard.readcard { opacity: 0.75; }
-  .deckcard h2 { margin: 0; font-size: 1.3rem; line-height: 1.25; }
+  .deckcard h2 {
+    margin: 0;
+    font-size: 1.35rem;
+    letter-spacing: -0.035em;
+    line-height: 1.22;
+    font-weight: 750;
+  }
   .deckcard h2 a { color: inherit; text-decoration: none; }
   .deckcard .hero {
-    width: 100%; max-height: 30vh; object-fit: cover; border-radius: 6px;
+    width: 100%; max-height: 30vh; object-fit: cover; border-radius: var(--radius-sm);
   }
   .deckcard .hero.heroloading { visibility: hidden; height: 0; }
   .decksummary {
     margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 1rem;
     overflow-y: auto; flex: 1;
   }
-  .deckcard .meta a { margin-left: auto; color: var(--accent); }
+  .deckcard .meta a { margin-left: auto; color: var(--accent); font-weight: 700; }
 
   /* end-of-deck "all caught up" card */
   .donecard {

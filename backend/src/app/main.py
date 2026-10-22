@@ -19,6 +19,7 @@ from app.api import (
     feeds,
     mail,
     ops,
+    reader_accounts,
     stories,
     usage,
     users,
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         import traceback
 
         from app.services.process import enqueue_backlog, start_worker, stop_worker
+        from app.services.translation import start_translation_worker, stop_translation_worker
         from app.workers.scheduler import start_scheduler, stop_scheduler
 
         faulthandler.register(signal.SIGUSR1, all_threads=True)
@@ -65,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         loop.add_signal_handler(signal.SIGUSR2, _dump_tasks)
 
         start_worker()
+        start_translation_worker()
         # Crash recovery (invariant 7): requeue articles stuck mid-pipeline
         async for session in get_session():
             await enqueue_backlog(session)
@@ -75,6 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finally:
             stop_scheduler()
             await stop_worker()
+            await stop_translation_worker()
     else:
         yield
 
@@ -93,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix="/api")
     app.include_router(feeds.router, prefix="/api")
     app.include_router(mail.router, prefix="/api")
+    app.include_router(reader_accounts.router, prefix="/api")
     app.include_router(categories.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(stories.router, prefix="/api")
@@ -132,6 +137,49 @@ ALEMBIC_DIR = BACKEND_DIR / "alembic"
 # no alembic_version table. Each entry maps schema markers that must ALL be
 # present to the revision such a DB should be stamped at, newest first.
 _LEGACY_STAMPS: list[tuple[list[tuple[str, str]], str]] = [
+    (
+        [
+            ("story_state", "saved_at"),
+        ],
+        "0019_story_saved",
+    ),
+    (
+        [
+            ("story", "language"),
+        ],
+        "0018_story_language",
+    ),
+    (
+        [
+            ("story_translation", "language"),
+        ],
+        "0017_story_translation",
+    ),
+    (
+        [
+            ("user_feed", "user_id"),
+        ],
+        "0016_user_feed",
+    ),
+    (
+        [
+            ("reader_account", "api_base_url"),
+            ("article", "origin_feed_title"),
+        ],
+        "0015_reader_account",
+    ),
+    (
+        [
+            ("category_suggestion", "normalized_text"),
+        ],
+        "0014_category_suggestions",
+    ),
+    (
+        [
+            ("feed", "email_count"),
+        ],
+        "0013_feed_email_count",
+    ),
     (
         [
             ("mail_account", "last_uid"),

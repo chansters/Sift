@@ -30,7 +30,9 @@ async def test_pipeline_snapshot(client: AsyncClient, db_session) -> None:
     r = await client.get("/api/activity/pipeline")
     assert r.status_code == 200
     body = r.json()
-    assert body["states"] == ["fetched", "fulltext", "summarized", "embedded", "clustered"]
+    assert body["states"] == [
+        "fetched", "fulltext", "summarized", "embedded", "clustered", "filtered"
+    ]
     titles = {row["title"] for row in body["rows"]}
     assert {"In flight", "Done"} <= titles
     assert body["in_flight"] == 1

@@ -20,6 +20,7 @@ from app.models import (
     OverridePair,
     Story,
     StoryRevision,
+    UserFeed,
 )
 from app.services import cluster, process
 from app.services.vectorstore import InMemoryVectorStore
@@ -362,6 +363,7 @@ async def _setup_story(client: AsyncClient, db_session) -> int:
         feed = Feed(url="https://api.example.com/rss")
         s.add(feed)
         await s.flush()
+        s.add(UserFeed(user_id=1, feed_id=feed.id))
         story = Story(title="Big Story", summary="Summary v1", version=2)
         s.add(story)
         await s.flush()
@@ -425,6 +427,11 @@ async def test_stories_feed_filter_and_options(client: AsyncClient, db_session) 
         f3 = Feed(url="https://lonely.example.com/rss", title="Lonely")
         s.add_all([f1, f2, f3])
         await s.flush()
+        s.add_all([
+            UserFeed(user_id=1, feed_id=f1.id),
+            UserFeed(user_id=1, feed_id=f2.id),
+            UserFeed(user_id=1, feed_id=f3.id),
+        ])
         s1 = Story(title="Only feed 1", summary="")
         s2 = Story(title="Feeds 1+2", summary="")
         s.add_all([s1, s2])
@@ -469,12 +476,14 @@ async def test_stories_feed_filter_and_options(client: AsyncClient, db_session) 
     assert options[feed_ids["one"]]["title"] == "One"
     assert options[feed_ids["one"]]["kind"] == "rss"
 
-    # any authenticated user may filter (feeds CRUD is admin-only)
+    # non-admin user can also subscribe to feeds and filter
     r = await client.post("/api/users", json={"username": "reader", "password": "readerpass"})
     assert r.status_code == 201
     await client.post("/api/auth/logout")
     r = await client.post("/api/auth/login", json={"username": "reader", "password": "readerpass"})
     assert r.status_code == 200
+    # reader subscribes to feed two
+    await client.post("/api/feeds", json={"url": "https://two.example.com/rss"})
     assert (await client.get("/api/stories/feed-options")).status_code == 200
     got = [i["id"] for i in (await client.get(f"/api/stories?feed={feed_ids['two']}")).json()]
     assert got == [ids["Feeds 1+2"]]
@@ -489,6 +498,7 @@ async def test_stories_list_sort(client: AsyncClient, db_session) -> None:
         feed = Feed(url="https://api.example.com/rss")
         s.add(feed)
         await s.flush()
+        s.add(UserFeed(user_id=1, feed_id=feed.id))
         now = datetime.now(UTC)
         # old article, recently processed, 1 source
         s1 = Story(title="S1", summary="", last_updated_at=now)
@@ -517,9 +527,9 @@ async def test_stories_list_sort(client: AsyncClient, db_session) -> None:
             assert story is not None
             ids[t] = story.id
 
-    # Default ordering (no params): article publication date, oldest first
+    # Default ordering: publication date (undated: last update), oldest first
     r = await client.get("/api/stories")
-    assert [i["id"] for i in r.json()] == [ids["S1"], ids["S2"], ids["S3"]]
+    assert [i["id"] for i in r.json()] == [ids["S1"], ids["S3"], ids["S2"]]
 
     r = await client.get("/api/stories?sort=updated&order=desc")
     assert [i["id"] for i in r.json()] == [ids["S1"], ids["S3"], ids["S2"]]
@@ -527,9 +537,9 @@ async def test_stories_list_sort(client: AsyncClient, db_session) -> None:
     assert [i["id"] for i in r.json()] == [ids["S2"], ids["S3"], ids["S1"]]
 
     r = await client.get("/api/stories?sort=published&order=desc")
-    assert [i["id"] for i in r.json()] == [ids["S2"], ids["S1"], ids["S3"]]
+    assert [i["id"] for i in r.json()] == [ids["S2"], ids["S3"], ids["S1"]]
     r = await client.get("/api/stories?sort=published&order=asc")
-    assert [i["id"] for i in r.json()] == [ids["S1"], ids["S2"], ids["S3"]]
+    assert [i["id"] for i in r.json()] == [ids["S1"], ids["S3"], ids["S2"]]
 
     r = await client.get("/api/stories?sort=sources&order=desc")
     assert [i["id"] for i in r.json()] == [ids["S2"], ids["S1"], ids["S3"]]

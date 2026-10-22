@@ -3,589 +3,925 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NewsGator — News, distilled.</title>
-<meta name="description" content="NewsGator is a self-hosted news reader that clusters duplicate coverage into single Stories, with honest AI headlines and summaries — so you read less and miss nothing." />
-<meta property="og:title" content="NewsGator — News, distilled." />
-<meta property="og:description" content="A self-hosted news reader that turns hundreds of RSS items into a handful of Stories worth your time." />
+<title>NewsGator — One story per real-world event</title>
+<meta name="description" content="NewsGator is a news aggregator that merges duplicate coverage into one evolving story, writes honest clickbait-free titles, and sends you back to the original publisher. Run it as a native Apple Intelligence app or on your own self-hosted server." />
+<meta property="og:title" content="NewsGator — One story per real-world event" />
+<meta property="og:description" content="One story per event. Honest titles. Read the source and support its author. Run NewsGator with Apple Intelligence or on your own self-hosted server." />
+<meta property="og:image" content="https://www.newsgator.app/assets/store/og-en.jpg" />
+<meta property="og:url" content="https://www.newsgator.app/" />
 <meta property="og:type" content="website" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐊</text></svg>" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="canonical" href="https://www.newsgator.app/" />
+<link rel="icon" href="assets/logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
 :root {
-  --bg: #070b09;
-  --bg-2: #0b1210;
-  --surface: rgba(255, 255, 255, 0.04);
-  --surface-2: rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.09);
-  --text: #e8f0ec;
-  --muted: #93a59c;
-  --accent: #4ade80;
-  --accent-2: #a3e635;
-  --accent-dim: rgba(74, 222, 128, 0.14);
-  --amber: #fbbf24;
-  --grad: linear-gradient(120deg, #4ade80 0%, #a3e635 55%, #d9f99d 100%);
+  --forest: #146B3A;
+  --forest-dark: #0B3D2A;
+  --gold: #F2B827;
+  --gold-soft: #FFF6DD;
+  --ink: #18211D;
+  --muted: #66716C;
+  --paper: #F8F7F1;
+  --surface: #FFFFFF;
+  --soft: #EFF5EE;
+  --line: #E3E7E1;
+  --line-strong: #CCD4CC;
   --radius: 18px;
-  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --radius-lg: 26px;
+  --shadow: 0 24px 60px rgba(11, 61, 42, 0.08);
+  --shadow-card: 0 8px 28px rgba(24, 33, 29, 0.06);
+  --font-display: "Newsreader", Georgia, serif;
   --font-body: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
-  background: var(--bg);
-  color: var(--text);
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--font-body);
   font-size: 17px;
   line-height: 1.65;
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
-::selection { background: var(--accent); color: #052e16; }
-
-/* ---------- backdrop ---------- */
-.orbs { position: fixed; inset: 0; z-index: -2; overflow: hidden; }
-.orb {
-  position: absolute; border-radius: 50%; filter: blur(110px); opacity: 0.5;
-  animation: drift 26s ease-in-out infinite alternate;
+img { max-width: 100%; height: auto; display: block; }
+a { color: inherit; }
+::selection { background: var(--gold); color: var(--forest-dark); }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+main { overflow: clip; }
+section { padding: 88px 0; }
+.section-head { max-width: 720px; margin-bottom: 34px; }
+.eyebrow, .mini-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--forest);
 }
-.orb.a { width: 55vw; height: 55vw; left: -18vw; top: -22vw; background: radial-gradient(circle, rgba(74,222,128,.22), transparent 65%); }
-.orb.b { width: 45vw; height: 45vw; right: -15vw; top: 22vh; background: radial-gradient(circle, rgba(163,230,53,.13), transparent 65%); animation-delay: -8s; }
-.orb.c { width: 40vw; height: 40vw; left: 24vw; bottom: -20vw; background: radial-gradient(circle, rgba(45,212,191,.12), transparent 65%); animation-delay: -16s; }
-@keyframes drift {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(6vw, 4vh) scale(1.12); }
-}
-.noise {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .05;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* ---------- layout ---------- */
-.wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
-section { padding: 110px 0; position: relative; }
-
-/* ---------- nav ---------- */
-nav {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  background: rgba(7, 11, 9, 0.72);
-  border-bottom: 1px solid transparent;
-  transition: border-color .3s;
-}
-nav.scrolled { border-bottom-color: var(--border); }
-nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
-.brand { font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -.02em; text-decoration: none; color: var(--text); display: flex; align-items: center; gap: 9px; }
-.brand .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--grad); box-shadow: 0 0 14px rgba(74,222,128,.6); }
-nav .links { display: flex; gap: 26px; align-items: center; }
-nav .links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color .2s; }
-nav .links a:hover { color: var(--text); }
-nav .cta {
-  color: #052e16 !important; background: var(--grad); padding: 8px 16px; border-radius: 999px;
-  font-weight: 600 !important; box-shadow: 0 4px 18px rgba(74,222,128,.25);
-}
-@media (max-width: 720px) { nav .links a:not(.cta) { display: none; } }
-
-/* ---------- hero ---------- */
-.hero { padding: 190px 0 90px; text-align: center; }
 .eyebrow {
-  display: inline-flex; align-items: center; gap: 8px;
-  font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--accent); background: var(--accent-dim); border: 1px solid rgba(74,222,128,.25);
-  padding: 7px 15px; border-radius: 999px; margin-bottom: 30px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.18);
 }
-.eyebrow .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(74,222,128,.5);} 50% { box-shadow: 0 0 0 6px rgba(74,222,128,0);} }
+h1, h2, h3 {
+  margin: 0;
+  color: var(--forest-dark);
+  letter-spacing: -0.02em;
+}
 h1 {
-  font-family: var(--font-display); font-weight: 700; letter-spacing: -.035em;
-  font-size: clamp(52px, 9vw, 108px); line-height: 1.02; margin-bottom: 28px;
+  font-family: var(--font-display);
+  font-size: clamp(46px, 7vw, 82px);
+  line-height: 0.98;
+  margin: 20px 0 18px;
 }
-h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.hero p.lede { max-width: 680px; margin: 0 auto 44px; font-size: clamp(17px, 2.2vw, 21px); color: var(--muted); }
-.hero .actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+h2 {
+  font-family: var(--font-display);
+  font-size: clamp(32px, 4.6vw, 50px);
+  line-height: 1.08;
+  margin-bottom: 12px;
+}
+h3 {
+  font-family: var(--font-display);
+  font-size: 25px;
+  line-height: 1.14;
+}
+p { margin: 0; }
+.sub {
+  max-width: 700px;
+  color: var(--muted);
+  font-size: 18px;
+}
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(248, 247, 241, 0.86);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+.site-nav.scrolled { border-bottom-color: var(--line); }
+.site-nav .wrap {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 700;
+}
+.brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+}
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+}
+.nav-links a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 14.5px;
+  font-weight: 500;
+}
+.nav-links a:hover,
+.nav-links a:focus-visible { color: var(--forest); }
+.nav-links .nav-cta {
+  padding: 10px 16px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--forest);
+  box-shadow: 0 8px 20px rgba(20, 107, 58, 0.2);
+}
+.hero {
+  padding: 64px 0 52px;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+  gap: 28px;
+  align-items: start;
+}
+.hero-copy .lede {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: clamp(18px, 2vw, 21px);
+}
+.hero-copy .lede strong { color: var(--ink); }
+.hero-copy .note {
+  margin-top: 18px;
+  color: var(--forest-dark);
+  font-weight: 600;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 26px;
+}
 .btn {
-  display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
-  font-weight: 600; font-size: 15.5px; padding: 14px 26px; border-radius: 14px;
-  transition: transform .2s, box-shadow .2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-radius: 14px;
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
-.btn:hover { transform: translateY(-2px); }
-.btn.primary { background: var(--grad); color: #052e16; box-shadow: 0 8px 30px rgba(74,222,128,.3); }
-.btn.primary:hover { box-shadow: 0 12px 40px rgba(74,222,128,.42); }
-.btn.ghost { color: var(--text); border: 1px solid var(--border); background: var(--surface); }
-.btn.ghost:hover { border-color: rgba(255,255,255,.22); background: var(--surface-2); }
-
-/* hero terminal-ish ticker */
-.ticker {
-  margin: 70px auto 0; max-width: 760px; text-align: left;
-  background: rgba(10, 16, 13, .8); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 20px 24px; font-family: var(--font-mono); font-size: 13.5px; line-height: 2.1;
-  box-shadow: 0 30px 80px rgba(0,0,0,.5);
-  overflow: hidden;
+.btn:hover,
+.btn:focus-visible { transform: translateY(-1px); }
+.btn.primary {
+  background: var(--forest);
+  color: #fff;
+  box-shadow: 0 10px 28px rgba(20, 107, 58, 0.2);
 }
-.ticker .bar { display: flex; gap: 7px; margin-bottom: 12px; }
-.ticker .bar i { width: 11px; height: 11px; border-radius: 50%; background: #26332d; }
-.ticker .bar i:first-child { background: #ff5f57; } .ticker .bar i:nth-child(2) { background: #febc2e; } .ticker .bar i:last-child { background: #28c840; }
-.ticker .line { white-space: nowrap; color: var(--muted); opacity: 0; animation: lineIn .5s forwards; }
-.ticker .line b { color: var(--accent); font-weight: 500; }
-.ticker .line .t { color: #5c6f66; }
-@keyframes lineIn { to { opacity: 1; } }
-
-/* ---------- section headers ---------- */
-.kicker { font-family: var(--font-mono); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 16px; }
-h2 { font-family: var(--font-display); font-weight: 700; letter-spacing: -.03em; font-size: clamp(34px, 5vw, 54px); line-height: 1.08; margin-bottom: 22px; }
-.sub { color: var(--muted); max-width: 640px; font-size: 18px; }
-.center { text-align: center; } .center .sub { margin: 0 auto; }
-
-/* ---------- reveal animation ---------- */
-.reveal { opacity: 0; transform: translateY(34px); transition: opacity .8s cubic-bezier(.2,.7,.3,1), transform .8s cubic-bezier(.2,.7,.3,1); }
-.reveal.in { opacity: 1; transform: none; }
-.reveal.d1 { transition-delay: .08s; } .reveal.d2 { transition-delay: .16s; } .reveal.d3 { transition-delay: .24s; }
-
-/* ---------- story / origin ---------- */
-.origin blockquote {
-  font-family: var(--font-display); font-size: clamp(24px, 3.6vw, 36px); font-weight: 500;
-  letter-spacing: -.02em; line-height: 1.35; max-width: 860px;
-  border-left: 3px solid var(--accent); padding-left: 30px; margin-top: 44px;
+.btn.primary:hover,
+.btn.primary:focus-visible { background: var(--forest-dark); }
+.btn.secondary {
+  background: var(--surface);
+  border-color: var(--line-strong);
 }
-.origin blockquote em { color: var(--accent); font-style: normal; }
-.origin .sig { margin-top: 26px; color: var(--muted); font-size: 15px; padding-left: 33px; }
-
-/* ---------- problem cards ---------- */
-.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 56px; }
-@media (max-width: 880px) { .cards { grid-template-columns: 1fr; } }
+.btn.secondary:hover,
+.btn.secondary:focus-visible { border-color: var(--forest); color: var(--forest); }
+.promise-stack {
+  display: grid;
+  gap: 14px;
+}
+.promise {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 22px 22px 20px;
+  box-shadow: var(--shadow-card);
+}
+.promise .k {
+  color: var(--forest);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.promise h3 { margin-top: 10px; font-size: 23px; }
+.promise p { margin-top: 10px; color: var(--muted); font-size: 15.5px; }
+.fact-strip {
+  margin-top: 26px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(239,245,238,0.95));
+  color: var(--forest-dark);
+}
+.fact-strip ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+.fact-strip li {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.fact-strip strong { color: var(--ink); }
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
 .card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 32px 28px; position: relative; overflow: hidden;
-  transition: transform .3s, border-color .3s, background .3s;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 26px 22px;
+  box-shadow: var(--shadow-card);
 }
-.card:hover { transform: translateY(-5px); border-color: rgba(74,222,128,.35); background: var(--surface-2); }
-.card .num { font-family: var(--font-mono); font-size: 13px; color: var(--accent); margin-bottom: 18px; }
-.card h3 { font-family: var(--font-display); font-size: 22px; letter-spacing: -.02em; margin-bottom: 12px; }
-.card p { color: var(--muted); font-size: 15.5px; }
-.card .glow { position: absolute; width: 180px; height: 180px; border-radius: 50%; background: radial-gradient(circle, rgba(74,222,128,.12), transparent 70%); top: -60px; right: -60px; pointer-events: none; }
-
-/* ---------- philosophy ---------- */
-.philosophy { background: linear-gradient(180deg, transparent, rgba(74,222,128,.045) 30%, rgba(74,222,128,.045) 70%, transparent); }
-.philosophy .big {
-  font-family: var(--font-display); font-weight: 700; letter-spacing: -.03em;
-  font-size: clamp(30px, 4.6vw, 50px); line-height: 1.2; max-width: 900px; margin: 0 auto 60px; text-align: center;
+.step-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  margin-bottom: 14px;
+  background: var(--soft);
+  color: var(--forest);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
 }
-.philosophy .big .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.tenets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
-@media (max-width: 880px) { .tenets { grid-template-columns: 1fr; } }
-.tenet { padding: 28px; border-radius: var(--radius); border: 1px solid var(--border); background: rgba(7,11,9,.55); }
-.tenet .ico { font-size: 26px; margin-bottom: 16px; }
-.tenet h3 { font-family: var(--font-display); font-size: 19px; margin-bottom: 10px; letter-spacing: -.01em; }
-.tenet p { color: var(--muted); font-size: 15px; }
-
-/* ---------- pipeline ---------- */
-.pipe { margin-top: 70px; display: flex; flex-direction: column; gap: 0; position: relative; max-width: 780px; margin-left: auto; margin-right: auto; }
-.step { display: flex; gap: 26px; position: relative; padding-bottom: 46px; }
-.step:last-child { padding-bottom: 0; }
-.step .rail { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 52px; }
-.step .bubble {
-  width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center;
-  background: var(--accent-dim); border: 1px solid rgba(74,222,128,.3); font-size: 22px;
-  box-shadow: 0 0 0 0 rgba(74,222,128,.2); transition: box-shadow .4s;
+.card p,
+.engine p,
+.feature p,
+.caption,
+.code-note,
+.footer-note {
+  color: var(--muted);
 }
-.step.in .bubble { box-shadow: 0 0 34px 2px rgba(74,222,128,.25); }
-.step .wire { width: 2px; flex: 1; margin-top: 6px; background: linear-gradient(180deg, rgba(74,222,128,.5), rgba(74,222,128,.08)); }
-.step:last-child .wire { display: none; }
-.step h3 { font-family: var(--font-display); font-size: 21px; letter-spacing: -.01em; margin-bottom: 8px; padding-top: 10px; }
-.step h3 .tag { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); background: var(--accent-dim); border: 1px solid rgba(74,222,128,.25); padding: 3px 9px; border-radius: 999px; margin-left: 10px; vertical-align: middle; letter-spacing: .06em; }
-.step p { color: var(--muted); font-size: 15.5px; max-width: 560px; }
-
-/* ---------- screenshots ---------- */
-.shot { margin-top: 70px; }
-.shot .frame {
-  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
-  background: var(--bg-2); box-shadow: 0 40px 100px rgba(0,0,0,.5);
+.card p { margin-top: 12px; font-size: 15.5px; }
+.modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
 }
-.shot .frame img { display: block; width: 100%; height: auto; }
-.shot .placeholder {
-  aspect-ratio: 16/9; display: grid; place-items: center; color: var(--muted);
-  font-family: var(--font-mono); font-size: 13px; letter-spacing: .05em;
-  background: repeating-linear-gradient(45deg, rgba(255,255,255,.02) 0 14px, transparent 14px 28px);
+.engine {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-lg) + 2px);
+  padding: 28px 24px;
+  box-shadow: var(--shadow-card);
 }
-.shot figcaption { margin-top: 18px; color: var(--muted); font-size: 15px; text-align: center; }
-.shot figcaption b { color: var(--text); font-weight: 600; }
-.duo { display: grid; grid-template-columns: 1.6fr 1fr; gap: 26px; align-items: start; margin-top: 70px; }
-@media (max-width: 880px) { .duo { grid-template-columns: 1fr; } }
-.phone {
-  border: 1px solid var(--border); border-radius: 34px; overflow: hidden; background: var(--bg-2);
-  box-shadow: 0 40px 100px rgba(0,0,0,.5), inset 0 0 0 6px #10171388; max-width: 340px; margin: 0 auto;
+.engine.featured {
+  border-color: rgba(242, 184, 39, 0.65);
+  box-shadow: 0 16px 40px rgba(242, 184, 39, 0.16);
 }
-.phone img { display: block; width: 100%; height: auto; }
-.phone .placeholder { aspect-ratio: 9/18.5; display: grid; place-items: center; color: var(--muted); font-family: var(--font-mono); font-size: 12px; text-align: center; padding: 20px; background: repeating-linear-gradient(45deg, rgba(255,255,255,.02) 0 14px, transparent 14px 28px); }
-
-/* ---------- features ---------- */
-.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }
-@media (max-width: 1000px) { .features { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+.engine .mini-label {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+}
+.engine.featured .mini-label {
+  background: var(--gold-soft);
+  border-color: rgba(242, 184, 39, 0.38);
+  color: #7a5a00;
+}
+.engine p { margin-top: 12px; font-size: 15.5px; }
+.engine ul {
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.engine li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 15.5px;
+}
+.engine li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--forest);
+  font-weight: 700;
+}
+.code-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--forest-dark);
+  color: #D7EBDD;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-x: auto;
+}
+.code-note .muted { color: #89AE99; }
+.inline-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--soft);
+  border: 1px solid rgba(20, 107, 58, 0.14);
+  color: var(--forest-dark);
+}
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
 .feature {
-  border: 1px solid var(--border); border-radius: 14px; padding: 22px 20px; background: var(--surface);
-  transition: border-color .25s, background .25s;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px 16px;
+  box-shadow: var(--shadow-card);
 }
-.feature:hover { border-color: rgba(74,222,128,.3); background: var(--surface-2); }
-.feature .ico { font-size: 21px; margin-bottom: 12px; }
-.feature h4 { font-family: var(--font-display); font-size: 15.5px; margin-bottom: 6px; letter-spacing: -.01em; }
-.feature p { color: var(--muted); font-size: 13.5px; line-height: 1.55; }
-
-/* ---------- cost ---------- */
-.cost .panel {
-  margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center;
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 44px;
+.feature h3 {
+  font-size: 19px;
+  margin-bottom: 8px;
 }
-@media (max-width: 880px) { .cost .panel { grid-template-columns: 1fr; padding: 30px; } }
-.cost ul { list-style: none; }
-.cost li { padding: 10px 0 10px 30px; position: relative; color: var(--muted); font-size: 15.5px; }
-.cost li::before { content: "→"; position: absolute; left: 0; color: var(--accent); }
-.cost li b { color: var(--text); font-weight: 600; }
-.cost .code {
-  font-family: var(--font-mono); font-size: 13px; background: #0a100d; border: 1px solid var(--border);
-  border-radius: 12px; padding: 22px; line-height: 2; overflow-x: auto; white-space: pre; color: #b7c9c0;
+.feature p { font-size: 14.5px; }
+.gallery-intro { margin-bottom: 28px; }
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
 }
-.cost .code .c { color: #5c6f66; } .cost .code .g { color: var(--accent); }
-
-/* ---------- cta / footer ---------- */
-.final { text-align: center; padding: 130px 0; }
-.final h2 { margin-bottom: 18px; }
-.final .sub { margin: 0 auto 40px; }
-footer { border-top: 1px solid var(--border); padding: 36px 0; color: var(--muted); font-size: 14px; }
-footer .wrap { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; }
-footer a { color: var(--muted); text-decoration: none; } footer a:hover { color: var(--accent); }
-
+.shot {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-lg) + 2px);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+.shot.wide { grid-column: span 6; }
+.shot.phone { grid-column: span 3; }
+.shot.full { grid-column: span 12; }
+.shot-media {
+  overflow: hidden;
+  border-radius: 20px;
+  background: #fff;
+}
+.shot.wide .shot-media img { border-radius: 16px; }
+.shot.full .shot-media { max-width: 560px; margin: 0 auto; }
+.shot.phone .shot-media {
+  max-width: 360px;
+  margin: 0 auto;
+  border-radius: 20px;
+}
+.shot.phone .shot-media img { border-radius: 16px; }
+figcaption { margin-top: 14px; }
+figcaption strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+}
+.cta-block {
+  text-align: center;
+  padding-top: 12px;
+}
+.cta-block .sub { margin: 0 auto; }
+footer {
+  padding: 30px 0 42px;
+  border-top: 1px solid var(--line);
+}
+.footer-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 14px 22px;
+  align-items: center;
+}
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.footer-links a {
+  text-decoration: none;
+  color: var(--muted);
+}
+.footer-links a:hover,
+.footer-links a:focus-visible { color: var(--forest); }
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.reveal.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (max-width: 980px) {
+  .hero-grid,
+  .gallery,
+  .modes,
+  .grid-3,
+  .feature-grid,
+  .fact-strip ul {
+    grid-template-columns: 1fr;
+  }
+  .shot.wide, .shot.phone, .shot.full { grid-column: auto; }
+}
+@media (max-width: 760px) {
+  .site-nav .wrap { align-items: flex-start; padding-top: 14px; padding-bottom: 14px; }
+  .nav-links a:not(.nav-cta) { display: none; }
+  section { padding: 70px 0; }
+  .hero { padding-top: 42px; }
+  .wrap { padding: 0 18px; }
+  .promise, .engine, .card, .feature, .shot { padding-left: 18px; padding-right: 18px; }
+}
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .reveal { opacity: 1; transform: none; }
-  html { scroll-behavior: auto; }
 }
+.shot-media { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center; flex-direction: column;
+  background: rgba(11, 61, 42, 0.92); padding: 24px; gap: 14px;
+}
+.lightbox.open { display: flex; }
+.lightbox img {
+  max-width: min(96vw, 1600px); max-height: calc(100vh - 110px);
+  width: auto; height: auto; border-radius: 12px; background: #fff;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4);
+}
+.lightbox .lb-caption { color: #fff; font-size: 15px; text-align: center; max-width: 720px; }
+.lightbox button {
+  position: absolute; border: 0; cursor: pointer; color: #fff;
+  background: rgba(255,255,255,.15); border-radius: 999px;
+  width: 44px; height: 44px; font-size: 24px; line-height: 1;
+}
+.lightbox button:hover, .lightbox button:focus-visible { background: rgba(255,255,255,.3); }
+.lightbox .lb-close { top: 16px; right: 16px; }
+.lightbox .lb-prev { left: 16px; top: 50%; transform: translateY(-50%); }
+.lightbox .lb-next { right: 16px; top: 50%; transform: translateY(-50%); }
+@media (max-width: 760px) {
+  .lightbox .lb-prev, .lightbox .lb-next { top: auto; bottom: 16px; transform: none; }
+}
+.langs { font-size: 14px; margin-top: 18px; color: var(--muted); }
+.langs a { margin-right: 10px; }
+.langs .current { font-weight: 600; margin-right: 10px; }
+.btn.store { padding: 0; border: 0; background: none; box-shadow: none; border-radius: 10px; }
+.btn.store img { display: block; height: 52px; width: auto; }
+.avail { margin-top: 18px; color: var(--forest-dark); font-weight: 600; }
 </style>
+<link rel="alternate" hreflang="en" href="https://www.newsgator.app/index.html" />
+<link rel="alternate" hreflang="fr" href="https://www.newsgator.app/index-fr.html" />
+<link rel="alternate" hreflang="de" href="https://www.newsgator.app/index-de.html" />
+<link rel="alternate" hreflang="es" href="https://www.newsgator.app/index-es.html" />
+<link rel="alternate" hreflang="it" href="https://www.newsgator.app/index-it.html" />
+<link rel="alternate" hreflang="pt" href="https://www.newsgator.app/index-pt.html" />
+<link rel="alternate" hreflang="ja" href="https://www.newsgator.app/index-ja.html" />
+<link rel="alternate" hreflang="ko" href="https://www.newsgator.app/index-ko.html" />
+<link rel="alternate" hreflang="zh-Hans" href="https://www.newsgator.app/index-zh-hans.html" />
+<link rel="alternate" hreflang="zh-Hant" href="https://www.newsgator.app/index-zh-hant.html" />
+<link rel="alternate" hreflang="x-default" href="https://www.newsgator.app/index.html" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "NewsGator", "operatingSystem": "iOS, iPadOS, macOS", "applicationCategory": "NewsApplication", "downloadUrl": "https://apps.apple.com/app/newsgator-news-aggregator/id6816198546", "installUrl": "https://apps.apple.com/app/newsgator-news-aggregator/id6816198546", "url": "https://www.newsgator.app/", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
 </head>
 <body>
-
-<div class="orbs"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
-<div class="noise"></div>
-
-<nav id="nav">
+<nav class="site-nav" id="site-nav">
   <div class="wrap">
-    <a class="brand" href="#top"><span class="dot"></span>NewsGator</a>
-    <div class="links">
-      <a href="#why">Why</a>
-      <a href="#philosophy">Philosophy</a>
+    <a class="brand" href="#top">
+      <img src="assets/logo.png" alt="NewsGator logo" />
+      <span>NewsGator</span>
+    </a>
+    <div class="nav-links" aria-label="Primary">
       <a href="#how">How it works</a>
-      <a href="#usage">Using it</a>
-      <a class="cta" href="https://github.com/Tekka90/NewsGator">GitHub ↗</a>
+      <a href="#modes">Two engines</a>
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a class="nav-cta" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
     </div>
   </div>
 </nav>
 
-<!-- ================= HERO ================= -->
-<header class="hero wrap" id="top">
-  <div class="eyebrow"><span class="pulse"></span> Self-hosted · Open source · AI-assisted</div>
-  <h1>News,<br /><span class="grad">distilled.</span></h1>
-  <p class="lede">
-    NewsGator reads your RSS feeds <b>and your newsletter inbox</b>, merges the five
-    articles covering the same event into
-    a single <b>Story</b>, and hands you an honest headline, a two-minute summary and the
-    sources — so you spend your time only on what deserves it.
-  </p>
-  <div class="actions">
-    <a class="btn primary" href="https://github.com/Tekka90/NewsGator">★ View on GitHub</a>
-    <a class="btn ghost" href="#how">See how it works ↓</a>
-  </div>
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy reveal">
+          <div class="eyebrow">News aggregator · not a plain RSS reader</div>
+          <h1>One story per<br />real-world event.</h1>
+          <p class="lede">
+            NewsGator gathers every article covering the same event into <strong>one living story</strong>,
+            keeps its neutral summary current as new facts arrive, gives it an <strong>honest, clickbait-free title</strong>,
+            and sends you back to the <strong>original publisher</strong> when it is time to read more.
+          </p>
+          <p class="note">Two engines: native Apple apps powered by Apple Intelligence, or your own self-hosted NewsGator server.</p>
+          <p class="avail">Now available on iPhone, iPad, iPhone Duo and Mac.</p>
+          <div class="actions">
+            <a class="btn store" href="https://apps.apple.com/app/newsgator-news-aggregator/id6816198546" target="_blank" rel="noopener noreferrer" aria-label="Download on the App Store"><img src="assets/badges/app-store-en.svg" alt="Download on the App Store" height="52" /></a>
+            <a class="btn secondary" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">View the self-hosted server</a>
+          </div>
+        </div>
 
-  <div class="ticker" aria-hidden="true">
-    <div class="bar"><i></i><i></i><i></i></div>
-    <div class="line" style="animation-delay:.4s"><span class="t">09:41:02</span> feed_poll&nbsp;&nbsp;&nbsp;&nbsp;<b>lemonde.fr</b> — 12 new entries</div>
-    <div class="line" style="animation-delay:.9s"><span class="t">09:41:09</span> fulltext_fetch <b>article #4821</b> — direct · image_recovered</div>
-    <div class="line" style="animation-delay:1.4s"><span class="t">09:41:12</span> llm_done&nbsp;&nbsp;&nbsp;&nbsp;<b>summarize</b> — 1.8s · 1 204 tok</div>
-    <div class="line" style="animation-delay:1.9s"><span class="t">09:41:12</span> cluster&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>attached</b> → story #137 · similarity 0.91</div>
-    <div class="line" style="animation-delay:2.4s"><span class="t">09:41:13</span> story_update <b>version 3 → 4</b> — new facts merged, headline refreshed</div>
-  </div>
-</header>
-
-<!-- ================= WHY ================= -->
-<section class="origin" id="why">
-  <div class="wrap">
-    <div class="kicker reveal">Why it exists</div>
-    <h2 class="reveal d1">Built out of<br />daily frustration.</h2>
-    <blockquote class="reveal d2">
-      I read the news every day, and it always felt like a struggle. I searched for the
-      right app for <em>years</em> and never found it. In 2026, building an application
-      is as easy as buying a piece of bread — so I described my need, and
-      <em>this is the result.</em>
-    </blockquote>
-    <p class="sig reveal d3">— the author, after one RSS reader too many</p>
-  </div>
-</section>
-
-<!-- ================= PROBLEM ================= -->
-<section id="problem">
-  <div class="wrap">
-    <div class="kicker reveal">The problem</div>
-    <h2 class="reveal d1">In 2026, news is<br />a firehose.</h2>
-    <p class="sub reveal d2">
-      We are submerged. Knowing what to read is harder than reading itself — and the
-      classic RSS workflow makes it worse, not better.
-    </p>
-
-    <div class="cards">
-      <div class="card reveal">
-        <div class="glow"></div>
-        <div class="num">01</div>
-        <h3>Drowned in feeds</h3>
-        <p>You subscribe to many sources because you want different angles — and get
-        hundreds of items a day. Nobody has that time. So you skim, anxious, sure you're
-        missing what matters.</p>
-      </div>
-      <div class="card reveal d1">
-        <div class="glow"></div>
-        <div class="num">02</div>
-        <h3>The same story, five times</h3>
-        <p>Every outlet covers the same event. You read one, then a second — and the other
-        three become pure noise you still have to wade through and dismiss, every single day.</p>
-      </div>
-      <div class="card reveal d2">
-        <div class="glow"></div>
-        <div class="num">03</div>
-        <h3>The clickbait toll booth</h3>
-        <p>A catchy title, an intro that says nothing. Click to the site, dismiss the cookie
-        banner, scroll past the ads… to discover there was nothing in the article.
-        Time is the most precious thing you have.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ================= PHILOSOPHY ================= -->
-<section class="philosophy" id="philosophy">
-  <div class="wrap">
-    <p class="big reveal">
-      This is <span class="grad">not a way to read the news.</span><br />
-      It's a way to <span class="grad">choose</span> the news worth reading.
-    </p>
-    <div class="tenets">
-      <div class="tenet reveal">
-        <div class="ico">🧭</div>
-        <h3>A filter, not a destination</h3>
-        <p>The summary exists to help you decide, never to replace the article. The last
-        step is always the same: open the piece and read it for real.</p>
-      </div>
-      <div class="tenet reveal d1">
-        <div class="ico">🔗</div>
-        <h3>Sources, always</h3>
-        <p>Every Story lists every source it was built from, one tap away. Publishers did
-        the work — they deserve the click and your attention.</p>
-      </div>
-      <div class="tenet reveal d2">
-        <div class="ico">⚖️</div>
-        <h3>Honest about AI</h3>
-        <p>Summaries can be wrong. Models can be biased. No claim of truth here — just a
-        triage tool. Trust, then verify at the source.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ================= HOW ================= -->
-<section id="how">
-  <div class="wrap">
-    <div class="center">
-      <div class="kicker reveal">How it works</div>
-      <h2 class="reveal d1">From XML firehose<br />to a handful of Stories.</h2>
-      <p class="sub reveal d2">You give it RSS feeds. It does the boring, repetitive part.</p>
-    </div>
-
-    <div class="pipe">
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">📡</div><div class="wire"></div></div>
-        <div>
-          <h3>Ingest <span class="tag">RSS / ATOM / IMAP</span></h3>
-          <p>Polls your feeds like any reader — and your newsletter mailbox too: each
-          sender becomes a feed, the LLM strips the footer/sponsor chrome and keeps the
-          human-written intro. New entries are deduplicated and queued —
-          nothing is ever lost, even across restarts.</p>
+        <div class="promise-stack reveal">
+          <article class="promise">
+            <div class="k">Promise 01</div>
+            <h3>Aggregation that stays current</h3>
+            <p>Duplicate coverage becomes one story. When new facts arrive, the summary is refined in place and read stories come back badged <strong>updated</strong>, never fake unread.</p>
+          </article>
+          <article class="promise">
+            <div class="k">Promise 02</div>
+            <h3>Honest titles</h3>
+            <p>Every story gets a realistic, factual headline designed to tell you what happened, not trick you into a click.</p>
+          </article>
+          <article class="promise">
+            <div class="k">Promise 03</div>
+            <h3>Read the source, support its author</h3>
+            <p>The summary is a triage tool. One tap opens the original publisher so the visit, subscription, or ad view still goes to the journalists who did the work.</p>
+          </article>
         </div>
       </div>
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">📄</div><div class="wire"></div></div>
-        <div>
-          <h3>Full-text fetch <span class="tag">PAST THE TEASER</span></h3>
-          <p>Goes and gets the real article content — not the three-line RSS teaser designed
-          to make you click. Images included.</p>
-        </div>
-      </div>
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">✍️</div><div class="wire"></div></div>
-        <div>
-          <h3>Summarize <span class="tag">YOUR LANGUAGE</span></h3>
-          <p>An LLM writes an honest headline and a compact summary — in the language you
-          actually think in, whatever the source wrote in.</p>
-        </div>
-      </div>
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">🧬</div><div class="wire"></div></div>
-        <div>
-          <h3>Embed &amp; cluster <span class="tag">DEDUPE BY MEANING</span></h3>
-          <p>Each article is embedded and compared against existing Stories. Same event?
-          It joins that Story instead of creating noise — and if it brings new facts,
-          the merged summary and headline are refreshed.</p>
-        </div>
-      </div>
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">☕</div><div class="wire"></div></div>
-        <div>
-          <h3>You read <span class="tag">THE GOOD PART</span></h3>
-          <p>Open the app, scroll or swipe through a handful of Stories, and deep-dive the
-          ones that matter — at the source, as it should be.</p>
-        </div>
-      </div>
-      <div class="step reveal">
-        <div class="rail"><div class="bubble">💬</div><div class="wire"></div></div>
-        <div>
-          <h3>You ask <span class="tag">CHAT YOUR ARCHIVE</span></h3>
-          <p>Not sure where you read something? Just ask. Your question is matched against
-          every Story by meaning, and the answer cites its sources as clickable cards —
-          so you can jump straight to the original.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
-<!-- ================= USAGE ================= -->
-<section id="usage">
-  <div class="wrap">
-    <div class="kicker reveal">Using it, every day</div>
-    <h2 class="reveal d1">Open. Swipe.<br />Deep-dive.</h2>
-    <p class="sub reveal d2">
-      A web app on your desktop, an installable PWA on your phone. Stories you skipped
-      stay read; Stories that gained new facts come back badged
-      <b style="color:var(--text)">“updated”</b> — never as fake unread.
-    </p>
-
-    <figure class="shot reveal">
-      <div class="frame">
-        <img src="assets/shots/stories-desktop.png" alt="The Stories list — one card per event, with sources and summary"
-             onerror="this.parentElement.innerHTML='&lt;div class=placeholder&gt;screenshot · stories-desktop.png&lt;/div&gt;'" />
-      </div>
-      <figcaption><b>The Stories list.</b> One card per event — not per article. Honest headline, summary, source logos, reading time.</figcaption>
-    </figure>
-
-    <div class="duo">
-      <figure class="shot reveal" style="margin-top:0">
-        <div class="frame">
-          <img src="assets/shots/story-detail.png" alt="Story detail with merged summary and all sources"
-               onerror="this.parentElement.innerHTML='&lt;div class=placeholder&gt;screenshot · story-detail.png&lt;/div&gt;'" />
-        </div>
-        <figcaption><b>Inside a Story.</b> The merged summary, then every source — one tap sends you to the publisher, where the real reading happens.</figcaption>
-      </figure>
-      <figure class="shot reveal d1" style="margin-top:0">
-        <div class="phone">
-          <img src="assets/shots/deck-mobile.png" alt="Mobile swipe deck — swipe left to mark read, right to go back"
-               onerror="this.parentElement.innerHTML='&lt;div class=placeholder&gt;screenshot ·&lt;br&gt;deck-mobile.png&lt;/div&gt;'" />
-        </div>
-        <figcaption><b>The swipe deck.</b> On touch devices, Stories become cards: left = read, right = back. Triage a whole day in two minutes.</figcaption>
-      </figure>
-    </div>
-
-    <figure class="shot reveal">
-      <div class="frame">
-        <img src="assets/shots/activity.png" alt="Live activity stream showing every pipeline decision"
-             onerror="this.parentElement.innerHTML='&lt;div class=placeholder&gt;screenshot · activity.png&lt;/div&gt;'" />
-      </div>
-      <figcaption><b>Full transparency.</b> Every pipeline decision — poll, fetch path, LLM call and latency, clustering similarity — streams live. Nothing happens in the dark.</figcaption>
-    </figure>
-
-    <figure class="shot reveal">
-      <div class="frame">
-        <img src="assets/shots/usage.png" alt="LLM usage dashboard with per-day chart and cost playground"
-             onerror="this.parentElement.innerHTML='&lt;div class=placeholder&gt;screenshot · usage.png&lt;/div&gt;'" />
-      </div>
-      <figcaption><b>Cost under control.</b> Every LLM call is metered — tokens, latency, per-feed and per-stage. Type a $/1M price and see what it would cost on a paid API.</figcaption>
-    </figure>
-  </div>
-</section>
-
-<!-- ================= FEATURES ================= -->
-<section id="features">
-  <div class="wrap">
-    <div class="center">
-      <div class="kicker reveal">And the little things</div>
-      <h2 class="reveal d1">Built for one user.<br />Polished for many.</h2>
-    </div>
-    <div class="features">
-      <div class="feature reveal"><div class="ico">🗞️</div><h4>Story clustering</h4><p>Duplicate coverage merges into one Story with a versioned, evolving summary.</p></div>
-      <div class="feature reveal d1"><div class="ico">�</div><h4>Newsletters are feeds too</h4><p>Point an IMAP folder at your newsletters — per user, read-only — and they join the same pipeline as any feed.</p></div>
-      <div class="feature reveal d2"><div class="ico">�💬</div><h4>Chat your archive</h4><p>Ask questions across everything you've loaded — the answer is grounded in your Stories and cites its sources.</p></div>
-      <div class="feature reveal d2"><div class="ico">🌍</div><h4>Your language</h4><p>Headlines and summaries written in the language you configure — per user.</p></div>
-      <div class="feature reveal d3"><div class="ico">📤</div><h4>Share, translated</h4><p>Share a Story to family in <em>their</em> language — translated on demand, sources included.</p></div>
-      <div class="feature reveal"><div class="ico">📑</div><h4>Readeck export</h4><p>One tap pushes a permanent, self-contained copy to your Readeck instance.</p></div>
-      <div class="feature reveal d1"><div class="ico">👁️</div><h4>Honest read state</h4><p>Read stays read. New facts on a read Story badge it “updated”, never unread.</p></div>
-      <div class="feature reveal d2"><div class="ico">👥</div><h4>Multi-user</h4><p>Admin-managed accounts; read state and language are per user.</p></div>
-      <div class="feature reveal d3"><div class="ico">📱</div><h4>PWA + dark mode</h4><p>Installs on iOS &amp; Android, follows your OS theme, works on flaky networks.</p></div>
-      <div class="feature reveal"><div class="ico">�️</div><h4>Story RSS feed</h4><p>Your distilled Stories are themselves an RSS feed — read them back in any reader you like.</p></div>
-      <div class="feature reveal d1"><div class="ico">📈</div><h4>Full observability</h4><p>Live activity stream of every pipeline decision, a real-time LLM interaction trace, and an LLM usage dashboard.</p></div>
-    </div>
-  </div>
-</section>
-
-<!-- ================= COST / STACK ================= -->
-<section class="cost" id="stack">
-  <div class="wrap">
-    <div class="kicker reveal">Your stack, your rules</div>
-    <h2 class="reveal d1">Cheap to run.<br />Yours to keep.</h2>
-    <div class="panel reveal d2">
-      <div>
+      <div class="fact-strip reveal">
         <ul>
-          <li><b>Any OpenAI-compatible LLM</b> — oMLX, Ollama, llama.cpp, LM Studio, or a paid API. No provider lock-in, ever.</li>
-          <li><b>No genius model needed</b> — summarizing articles is a modest task; a small local model does it well.</li>
-          <li><b>Metered from day one</b> — tokens and latency logged per call; a price playground estimates what a paid API would cost.</li>
-          <li><b>Boring, solid tech</b> — FastAPI + SQLite (+ sqlite-vec, or external Qdrant), SvelteKit frontend, one Docker compose.</li>
+          <li><strong>Standalone:</strong> Apple Intelligence, iCloud sync, no server. Free to try, with an optional Pro upgrade.</li>
+          <li><strong>Self-hosted:</strong> Python/FastAPI + SvelteKit with any OpenAI-compatible AI you choose.</li>
+          <li><strong>Privacy:</strong> zero ads, zero third-party trackers, zero analytics.</li>
         </ul>
       </div>
-      <div class="code"><span class="c"># that's the whole install</span>
-<span class="g">$</span> git clone …/NewsGator && cd docker
-<span class="g">$</span> cp .env.example .env   <span class="c"># LLM_BASE_URL → your server</span>
-<span class="g">$</span> docker compose up --build
-
-<span class="c"># → http://localhost:3000</span></div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ================= FINAL ================= -->
-<section class="final">
-  <div class="wrap">
-    <h2 class="reveal">Stop drowning.<br /><span style="background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent">Start choosing.</span></h2>
-    <p class="sub reveal d1">Free, self-hosted, and it will never show you an ad or a cookie banner.</p>
-    <div class="actions reveal d2" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
-      <a class="btn primary" href="https://github.com/Tekka90/NewsGator">★ Star on GitHub</a>
-      <a class="btn ghost" href="https://github.com/Tekka90/NewsGator/blob/main/SPEC.md">Read the spec</a>
+  <section id="how">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">How it works</div>
+        <h2>Three steps from news flood to signal.</h2>
+        <p class="sub">NewsGator is built for people who want coverage from many sources without reading the same story five times.</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="card reveal">
+          <div class="step-num">01</div>
+          <h3>Add your sources</h3>
+          <p>Bring in RSS feeds, IMAP newsletters, or a synced reader account such as FreshRSS, Miniflux, or Inoreader. OPML import keeps setup quick.</p>
+        </article>
+        <article class="card reveal">
+          <div class="step-num">02</div>
+          <h3>NewsGator groups the event</h3>
+          <p>It fetches the full text, clusters every article about the same real-world event, writes a neutral summary, and assigns a factual headline.</p>
+        </article>
+        <article class="card reveal">
+          <div class="step-num">03</div>
+          <h3>You triage, then go deeper</h3>
+          <p>Read a short story first, open the publisher when it matters, then come back later to ask your archive, share a story, or follow the distilled story RSS feed.</p>
+        </article>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
+
+  <section id="modes">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">Two ways to run it</div>
+        <h2>The same idea, two very different engines.</h2>
+        <p class="sub">Pick the setup that fits your life: zero infrastructure on Apple devices, or a full self-hosted server for your household.</p>
+      </div>
+
+      <div class="modes">
+        <article class="engine featured reveal">
+          <div class="mini-label">Standalone native apps</div>
+          <h3>Apple Intelligence, no server</h3>
+          <p>Native iPhone, iPad, and Mac apps powered by Apple Private Cloud Compute first, then the on-device model. Your library and read state sync through iCloud.</p>
+          <ul>
+            <li>No server to run. Try it free with a trial and a daily free allowance; NewsGator Pro unlocks unlimited processing, Listen and widgets.</li>
+            <li>Available in 10 languages: English, French, German, Spanish, Italian, Portuguese, Japanese, Korean, and Simplified and Traditional Chinese.</li>
+            <li>Siri and Shortcuts support for faster capture and reading flows.</li>
+            <li>Listen to your stories, even in the car: natural on-device voices and CarPlay.</li>
+            <li>The same story model: one event, one evolving story.</li>
+          </ul>
+        </article>
+
+        <article class="engine reveal">
+          <div class="mini-label">Self-hosted server</div>
+          <h3>Python, FastAPI, SvelteKit, your AI</h3>
+          <p>Run the NewsGator server yourself and point it at any OpenAI-compatible AI you prefer: oMLX, Ollama, llama.cpp, LM Studio, or another compatible endpoint.</p>
+          <ul>
+            <li>Multi-user reading with per-user feeds, read state, and preferences.</li>
+            <li>Web app + PWA, archive chat, story sharing, story RSS feed, and activity tracing.</li>
+            <li>RSS, IMAP newsletters, and FreshRSS/Miniflux/Inoreader-style reader sync.</li>
+            <li>The native apps can connect to your server in Server mode: free to use, with only Listen and widgets reserved for Pro.</li>
+          </ul>
+          <div class="code-note"><span class="muted"># compact Docker setup</span><br />git clone …/NewsGator &amp;&amp; cd docker<br />cp .env.example .env<br />docker compose up --build</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">Compact feature list</div>
+        <h2>The parts people actually use.</h2>
+        
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature reveal">
+          <h3>Listen &amp; CarPlay</h3>
+          <p>A spoken queue that starts at your first unread story, with natural voices that run fully on your device.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Archive chat</h3>
+          <p>Ask your story archive questions with grounded, cited answers.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Newsletters included</h3>
+          <p>IMAP newsletters flow into the same story pipeline as feeds.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Reader sync</h3>
+          <p>Connect FreshRSS, Miniflux, or Inoreader-compatible accounts.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Updated, not unread</h3>
+          <p>Read state stays honest when a story gains new facts.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>OPML ready</h3>
+          <p>Import and export feed lists without rebuilding your library by hand.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Story sharing</h3>
+          <p>Share a story summary and still link straight to the original reporting.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Story RSS feed</h3>
+          <p>Your distilled story archive can itself be consumed in any RSS reader.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Multi-user server</h3>
+          <p>One self-hosted instance can serve a household without flattening everyone into one account.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Widgets</h3>
+          <p>Home Screen, Lock Screen and Mac widgets keep your latest Stories one glance away (Pro).</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Feed discovery</h3>
+          <p>Find quality sources by country and topic, or let the AI search for you.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Saved Stories</h3>
+          <p>Star a Story to keep it; saved Stories are never cleaned up.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>Translation</h3>
+          <p>Read every Story in your language, translated on demand and cached.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>iCloud, every device</h3>
+          <p>Your library and read state follow you across iPhone, iPad and Mac. Any capable device can process for the others.</p>
+        </article>
+        <article class="feature reveal">
+          <h3>In-app help</h3>
+          <p>Ask the chat how the app works: help answers come from the built-in docs, on your device.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="video">
+    <link rel="stylesheet" href="assets/video.css" />
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="eyebrow">Watch</div>
+        <h2>See NewsGator in action.</h2>
+        <p class="sub">A short tour of the app.</p>
+      </div>
+      <div class="video-frame reveal">
+        <video controls playsinline preload="none" poster="assets/video/poster.jpg" src="assets/video/newsgator-demo.mp4"></video>
+      </div>
+      <p class="video-note">More on <a href="https://www.youtube.com/@NewsGatorApp" rel="noopener">our YouTube channel</a>.</p>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <div class="wrap">
+      <div class="section-head gallery-intro reveal">
+        <div class="eyebrow">Screenshots</div>
+        <h2>Current native-app screens, not marketing mockups.</h2>
+        <p class="sub">Current captures from the iPhone, iPad, iPhone Duo and Mac apps, plus the self-hosted server's web app.</p>
+      </div>
+
+      <div class="gallery">
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-mac-stories.webp" alt="Mac stories view showing one card per event in the NewsGator triage list" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Stories triage on Mac</strong>
+            <span class="caption">One event per card, with factual titles, source count, category, and update state.</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-mac-detail.webp" alt="Mac story detail view with the original publisher page open beside the summarized story" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Read the source</strong>
+            <span class="caption">The summary is the front door. The original publisher remains the place for the full article.</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-iphone-stories.webp" alt="iPhone story card view for quick swipe-based news triage" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Fast triage on iPhone</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-iphone-listen.webp" alt="Listen mode on iPhone with a spoken queue of stories" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Listen, even in the car</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-iphone-widgets.webp" alt="NewsGator widgets on the iPhone Home Screen and Lock Screen" width="800" height="1734" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Widgets on every screen</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot phone reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-duo-stories.webp" alt="NewsGator stories on a foldable iPhone" width="900" height="1310" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Built for foldable iPhone</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-mac-discovery.webp" alt="Feed discovery on Mac: catalog search by country and category" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Discover new feeds</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-mac-chat.webp" alt="Archive chat on Mac answering a question with cited stories" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Ask your archive</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-mac-activity.webp" alt="Mac activity view showing the NewsGator processing pipeline and live Apple Intelligence activity" width="1600" height="1000" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Visible pipeline activity</strong>
+            <span class="caption">Track processing, devices, and story pipeline progress instead of guessing what the app is doing.</span>
+          </figcaption>
+        </figure>
+
+        <figure class="shot wide reveal">
+          <div class="shot-media">
+            <img src="assets/store/en-ipad-stories.webp" alt="NewsGator stories on iPad" width="1000" height="1334" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Made for iPad</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="shot full reveal">
+          <div class="shot-media">
+            <img src="assets/shots/app-web-usage.jpg" alt="Server web app LLM usage page with token totals, tokens per day and a per-stage breakdown" width="1010" height="1130" loading="lazy" />
+          </div>
+          <figcaption>
+            <strong>Know what your AI costs</strong>
+            <span class="caption">With your own server, see tokens per day, stage and model, and compare providers with your real usage.</span>
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-block">
+    <div class="wrap reveal">
+      <div class="eyebrow">Open source</div>
+      <h2>Less duplicated noise. More signal.</h2>
+      <p class="sub">NewsGator helps you decide what is worth reading, then gets out of the way. No ads, no third-party trackers, no analytics.</p>
+      <div class="actions" style="justify-content:center;">
+        <a class="btn store" href="https://apps.apple.com/app/newsgator-news-aggregator/id6816198546" target="_blank" rel="noopener noreferrer" aria-label="Download on the App Store"><img src="assets/badges/app-store-en.svg" alt="Download on the App Store" height="52" /></a>
+        <a class="btn secondary" href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">Server repository</a>
+      </div>
+    </div>
+  </section>
+</main>
 
 <footer>
-  <div class="wrap">
-    <span>🐊 NewsGator — news, distilled.</span>
-    <span><a href="https://github.com/Tekka90/NewsGator">GitHub</a> · Built with an LLM, coffee, and years of RSS frustration.</span>
+  <div class="wrap footer-grid">
+    <div class="footer-note">
+      <strong>NewsGator</strong> — a news aggregator for people who want fewer tabs and better reading decisions.
+    </div>
+    <div class="footer-links">
+      <a href="support.html">Support</a>
+      <a href="privacypolicy.html">Privacy Policy</a>
+      <a href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noopener noreferrer">Server GitHub</a>
+      <a href="https://github.com/Tekka90/Newsgator-Apple" target="_blank" rel="noopener noreferrer">Native app GitHub</a>
+    </div>
   </div>
+  <div class="wrap"><div class="langs"><span class="current">English</span> <a href="index-fr.html" hreflang="fr">Français</a> <a href="index-de.html" hreflang="de">Deutsch</a> <a href="index-es.html" hreflang="es">Español</a> <a href="index-it.html" hreflang="it">Italiano</a> <a href="index-pt.html" hreflang="pt">Português</a> <a href="index-ja.html" hreflang="ja">日本語</a> <a href="index-ko.html" hreflang="ko">한국어</a> <a href="index-zh-hans.html" hreflang="zh-Hans">简体中文</a> <a href="index-zh-hant.html" hreflang="zh-Hant">繁體中文</a></div></div>
 </footer>
 
-<script>
-// scroll reveal
-const io = new IntersectionObserver((entries) => {
-  for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-}, { threshold: 0.12 });
-document.querySelectorAll('.reveal, .step').forEach(el => io.observe(el));
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer" hidden>
+  <button class="lb-close" aria-label="Close">&times;</button>
+  <button class="lb-prev" aria-label="Previous screenshot">&#8249;</button>
+  <img alt="" />
+  <div class="lb-caption"></div>
+  <button class="lb-next" aria-label="Next screenshot">&#8250;</button>
+</div>
 
-// nav border on scroll
-const nav = document.getElementById('nav');
-addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 10), { passive: true });
+<script>
+const nav = document.getElementById('site-nav');
+const updateNav = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+updateNav();
+window.addEventListener('scroll', updateNav, { passive: true });
+
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!reduced && 'IntersectionObserver' in window) {
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('in');
+      observer.unobserve(entry.target);
+    }
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+} else {
+  document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+}
+const lightbox = document.getElementById('lightbox');
+const lbImg = lightbox.querySelector('img');
+const lbCaption = lightbox.querySelector('.lb-caption');
+const shots = [...document.querySelectorAll('.shot')];
+let current = 0;
+const show = (i) => {
+  current = (i + shots.length) % shots.length;
+  const img = shots[current].querySelector('img');
+  lbImg.src = img.src;
+  lbImg.alt = img.alt;
+  lbCaption.textContent = shots[current].querySelector('strong').textContent;
+};
+const openBox = (i) => { show(i); lightbox.hidden = false; lightbox.classList.add('open'); document.body.style.overflow = 'hidden'; lightbox.querySelector('.lb-close').focus(); };
+const closeBox = () => { lightbox.classList.remove('open'); lightbox.hidden = true; document.body.style.overflow = ''; };
+shots.forEach((shot, i) => shot.querySelector('.shot-media').addEventListener('click', () => openBox(i)));
+lightbox.querySelector('.lb-close').addEventListener('click', closeBox);
+lightbox.querySelector('.lb-prev').addEventListener('click', (e) => { e.stopPropagation(); show(current - 1); });
+lightbox.querySelector('.lb-next').addEventListener('click', (e) => { e.stopPropagation(); show(current + 1); });
+lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeBox(); });
+document.addEventListener('keydown', (e) => {
+  if (lightbox.hidden) return;
+  if (e.key === 'Escape') closeBox();
+  else if (e.key === 'ArrowLeft') show(current - 1);
+  else if (e.key === 'ArrowRight') show(current + 1);
+});
 </script>
 </body>
 </html>

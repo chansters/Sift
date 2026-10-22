@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_session
 from app.models import Article, Feed
-from app.services import activity
+from app.services import activity, youtube
 
 # Coarse markers — good enough to route to the next fallback (SPEC §9)
 PAYWALL_MARKERS = (
@@ -36,6 +36,12 @@ PAYWALL_MARKERS = (
 )
 
 USER_AGENT = "NewsGator/0.1 (+self-hosted feed reader)"
+# archive.is answers 429 to non-browser agents, so lookups there present as Safari.
+ARCHIVE_HOSTS = frozenset({"archive.is", "archive.ph", "archive.today"})
+ARCHIVE_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+)
 MIN_INTERVAL_S = 2.0  # per-domain rate limit
 
 _robots_cache: dict[str, tuple[robots.RobotsParser, float]] = {}
@@ -96,7 +102,8 @@ async def _fetch_page(url: str, cookies: dict[str, str] | None = None) -> str | 
         return None
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            resp = await client.get(url, headers={"User-Agent": USER_AGENT}, cookies=cookies)
+            agent = ARCHIVE_USER_AGENT if _domain(url) in ARCHIVE_HOSTS else USER_AGENT
+            resp = await client.get(url, headers={"User-Agent": agent}, cookies=cookies)
         if resp.status_code >= 400:
             return None
         return resp.text
@@ -223,6 +230,22 @@ def _jsonld_dates(node: object) -> list[str]:
     return found
 
 
+def _strip_archive_chrome(html: str) -> str:
+    """Keep only the snapshotted page: drop archive.is's header, share box and toolbar."""
+    from lxml import html as lxml_html
+
+    try:
+        doc = lxml_html.fromstring(_clean_html(html))
+    except (ValueError, lxml_html.etree.ParserError):
+        return html
+    content = doc.xpath('//*[@id="CONTENT"]')
+    if content:
+        return str(lxml_html.tostring(content[0], encoding="unicode"))
+    for el in doc.xpath('//*[@id="HEADER" or @id="DIVSHARE" or @id="SOLID"]'):
+        el.drop_tree()
+    return str(lxml_html.tostring(doc, encoding="unicode"))
+
+
 def _explicit_page_date(html: str) -> datetime | None:
     """Publication date from EXPLICIT metadata only (og/article meta, JSON-LD).
 
@@ -267,8 +290,102 @@ def _archive_url(url: str) -> str:
     return f"https://archive.is/newest/{quote(url, safe='')}"
 
 
+async def _fetch_video_text(session: AsyncSession, article: Article, video_id: str) -> None:
+    """YouTube video: the paragraphed transcript is the article text (YOUTUBE_PLAN 3.5-3.8).
+
+    Shorts are dropped (state `clustered`, no story); live/upcoming videos and transient
+    failures stay in `fetched` for the backlog sweep; unplayable videos and videos without
+    captions fall back to the RSS description with a visible warning.
+    """
+    payload: dict[str, object] = {"article_id": article.id, "video_id": video_id}
+    try:
+        result = await youtube.fetch_video(video_id)
+    except youtube.YouTubeError as exc:
+        await activity.emit(
+            session,
+            "fulltext",
+            "fulltext_fetch",
+            {**payload, "path": "youtube_error", "error_code": exc.code.value,
+             "reason": exc.message[:300]},
+            level="error" if exc.code is youtube.ErrorCode.PARSE_FAILED else "warn",
+        )
+        await session.commit()  # stays 'fetched': retried by the backlog sweep
+        return
+
+    outcome, info = result.outcome, result.info
+    if outcome in (youtube.Outcome.LIVE, youtube.Outcome.UPCOMING):
+        await activity.emit(
+            session,
+            "fulltext",
+            "fulltext_fetch",
+            {**payload, "path": "youtube_pending", "outcome": outcome.value,
+             "reason": result.reason},
+        )
+        await session.commit()
+        return
+    if outcome is youtube.Outcome.SHORT:
+        article.processing_state = "clustered"  # dropped: never summarised, never in a story
+        article.content_status = "skipped"
+        article.content_warning = "Skipped: short-form video"
+        await activity.emit(
+            session,
+            "fulltext",
+            "fulltext_fetch",
+            {**payload, "path": "youtube_skipped", "outcome": "short",
+             "reason": "skipped: short", "length_seconds": info.length_seconds},
+        )
+        await session.commit()
+        return
+
+    if info.title and (not article.title or article.title == urlparse(article.url).hostname):
+        article.title = info.title[:1024]
+    if article.image_url is None:
+        article.image_url = youtube.thumbnail_url(video_id)
+
+    reason: str | None = None
+    if outcome is youtube.Outcome.TRANSCRIPT:
+        text = result.text
+        path = "youtube_transcript"
+        article.content_status = "full"
+        article.content_warning = None
+    else:
+        reason = result.reason
+        text = result.text or article.raw_content
+        article.content_status = "partial"
+        if outcome is youtube.Outcome.UNPLAYABLE:
+            path = "youtube_unavailable"
+            text = article.raw_content
+            article.content_warning = f"Video unavailable: {result.reason}"
+        else:
+            path = "youtube_description"
+            article.content_warning = "No captions available; summary based on the description"
+    article.full_text = text
+    article.processing_state = "fulltext"
+    await activity.emit(
+        session,
+        "fulltext",
+        "fulltext_fetch",
+        {
+            **payload,
+            "path": path,
+            "chars": len(text or ""),
+            "reason": reason,
+            "language": result.track.language_code if result.track else None,
+            "caption_kind": (
+                "auto" if result.track and result.track.is_auto else "manual"
+            ) if result.track else None,
+        },
+        level="info" if outcome is youtube.Outcome.TRANSCRIPT else "warn",
+    )
+    await session.commit()
+
+
 async def fetch_full_text(session: AsyncSession, article: Article, feed: Feed) -> None:
     """Run the fetch chain for one article; persist outcome immediately."""
+    video_id = youtube.parse_video_id(article.url)
+    if video_id:
+        await _fetch_video_text(session, article, video_id)
+        return
     cookies = _parse_cookies(feed.auth_cookies)
     path = "rss_only"
     text: str | None = None
@@ -289,7 +406,7 @@ async def fetch_full_text(session: AsyncSession, article: Article, feed: Feed) -
         # dates (URL paths, copyright years) would make stories sort randomly,
         # so in any doubt the email date stays. RSS entries keep their
         # feedparser date regardless — it is authoritative.
-        if feed.kind == "mail":
+        if feed.kind in ("mail", "saved"):
             page_date = _explicit_page_date(html)
             if page_date is not None and page_date != article.published_at:
                 article.published_at = page_date
@@ -314,8 +431,13 @@ async def fetch_full_text(session: AsyncSession, article: Article, feed: Feed) -
         if not cache_ok:
             archived = await _fetch_page(_archive_url(article.url))
             if archived:
-                candidate = await anyio.to_thread.run_sync(_extract_text, archived)
-                if candidate and len(candidate) >= settings.fulltext_min_chars:
+                stripped = await anyio.to_thread.run_sync(_strip_archive_chrome, archived)
+                candidate = await anyio.to_thread.run_sync(_extract_text, stripped)
+                if (
+                    candidate
+                    and len(candidate) >= settings.fulltext_min_chars
+                    and not _looks_paywalled(candidate)
+                ):
                     text, path = candidate, "archive.is"
                 else:
                     _archive_failures[article.url] = time.time()

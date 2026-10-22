@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     embed_base_url: str | None = None  # defaults to llm_base_url when unset
     embed_model: str = "bge-m3"
     llm_timeout_s: float = 120.0
+    # Usable context window (tokens) of LLM_MODEL. Article text beyond what fits
+    # (minus reserved output + prompt) is condensed map-reduce style before
+    # summarising (services/llm_budget.py). Minimum 2048.
+    llm_context_tokens: int = 32768
+    # Feed discovery stops verifying leads after this long and returns what it has
+    # (keeps the request under typical reverse-proxy timeouts).
+    discovery_budget_s: float = 40.0
 
     # Live LLM interaction trace (Activity page): in-memory only, never written
     # to the DB; broadcasts truncated prompts/replies over the activity SSE stream.
@@ -47,6 +54,14 @@ class Settings(BaseSettings):
 
     # Language policy (SPEC §1): summaries/embeddings in this language; GUI English-only
     summary_language: str = "en"
+
+    # Story-level length guidance used in the merge/headline prompts (the per-article
+    # summary and chat prompts keep their own fixed lengths). headline_min_words = 0
+    # means no minimum is mentioned in the prompt.
+    summary_min_sentences: int = 3
+    summary_max_sentences: int = 5
+    headline_min_words: int = 0
+    headline_max_words: int = 12
 
     # Sharing: languages offered when sharing a story (comma-separated ISO 639-1
     # codes, filtered to the known list in prompts.LANGUAGE_NAMES). Translation
@@ -70,7 +85,8 @@ class Settings(BaseSettings):
     poll_interval_max_minutes: int = 60
     fulltext_min_chars: int = 400  # below this → try archive.is fallback
     archive_failure_cache_hours: int = 24
-    backlog_sweep_minutes: int = 5  # requeue articles stuck in 'fulltext' state
+    backlog_sweep_minutes: int = 30  # requeue unclustered articles stuck mid-pipeline
+    article_process_timeout_minutes: int = 15  # timeout per article across pipeline stages
     # First-poll backfill window (SPEC §9): on a feed's first poll, skip entries
     # older than this many days. 0 = import everything. Per-feed overridable.
     feed_backfill_days: int = 7
@@ -88,6 +104,9 @@ class Settings(BaseSettings):
     # surviving news links. Far more reliable than one-pass triage.
     newsletter_llm_clean: bool = True
 
+    # Third-party RSS Reader API ingestion (SPEC §9, Google Reader API standard):
+    reader_poll_minutes: int = 15  # how often the scheduler polls all reader accounts
+
     # GUI: source favicon proxy cache (hours)
     favicon_cache_hours: int = 168
 
@@ -99,6 +118,13 @@ class Settings(BaseSettings):
     # Readeck integration (optional — enabled only when both are set)
     readeck_base_url: str | None = None
     readeck_token: str | None = None
+
+    # Category-suggestion detection (services/category_suggestions.py): the
+    # summarize LLM call may propose a new category when none of the taxonomy
+    # fits; recurring proposals surface to admins on the Settings page.
+    category_suggestions_enabled: bool = True
+    category_suggestion_min_articles: int = 5  # distinct articles before proposing
+    category_suggestion_window_days: int = 30  # rolling window for the count
 
 
 settings = Settings()

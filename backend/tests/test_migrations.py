@@ -51,6 +51,15 @@ def _columns(path: Path, table: str) -> set[str]:
         conn.close()
 
 
+def _tables(path: Path) -> set[str]:
+    conn = sqlite3.connect(path)
+    try:
+        rows = conn.execute("select name from sqlite_master where type='table'")
+        return {str(r[0]) for r in rows}
+    finally:
+        conn.close()
+
+
 async def test_empty_db_migrated_from_scratch(engine_url: str, tmp_path) -> None:
     db.init_engine(engine_url)
     await _ensure_schema_and_seed()
@@ -87,6 +96,22 @@ async def test_legacy_create_all_db_stamped_and_upgraded(
     sync_conn.execute("ALTER TABLE feed DROP COLUMN sender_email")
     sync_conn.execute("ALTER TABLE article DROP COLUMN newsletter_intro")
     sync_conn.execute("DROP TABLE mail_account")
+    # 0013 (feed.email_count) added later still
+    sync_conn.execute("ALTER TABLE feed DROP COLUMN email_count")
+    # 0014 (category suggestions) added later still
+    sync_conn.execute("DROP TABLE category_suggestion")
+    sync_conn.execute("DROP TABLE category_proposal_dismissal")
+    # 0015 (reader accounts) added later still
+    sync_conn.execute("ALTER TABLE article DROP COLUMN origin_feed_title")
+    sync_conn.execute("DROP TABLE reader_account")
+    # 0016 (user feeds) added later still
+    sync_conn.execute("DROP TABLE user_feed")
+    # 0017 (story translations) added later still
+    sync_conn.execute("DROP TABLE story_translation")
+    # 0018 (story language) added later still
+    sync_conn.execute("ALTER TABLE story DROP COLUMN language")
+    # 0019 (story_state.saved_at) added later still
+    sync_conn.execute("ALTER TABLE story_state DROP COLUMN saved_at")
     sync_conn.commit()
     sync_conn.close()
     db.init_engine(engine_url)  # reconnect after the sync-side ALTER
@@ -95,6 +120,7 @@ async def test_legacy_create_all_db_stamped_and_upgraded(
     path = tmp_path / "auto.db"
     assert _version(path) is not None
     assert "image_url" in _columns(path, "story")
+    assert "language" in _columns(path, "story")
     assert "story_sort" in _columns(path, "user")
     assert "story_filter" in _columns(path, "user")
     assert "backfill_days" in _columns(path, "feed")
@@ -105,6 +131,14 @@ async def test_legacy_create_all_db_stamped_and_upgraded(
     assert "sender_email" in _columns(path, "feed")
     assert "newsletter_intro" in _columns(path, "article")
     assert "last_uid" in _columns(path, "mail_account")
+    assert "email_count" in _columns(path, "feed")
+    assert "category_suggestion" in _tables(path)
+    assert "category_proposal_dismissal" in _tables(path)
+    assert "reader_account" in _tables(path)
+    assert "origin_feed_title" in _columns(path, "article")
+    assert "user_feed" in _tables(path)
+    assert "story_translation" in _tables(path)
+    assert "saved_at" in _columns(path, "story_state")
 
 
 async def test_already_at_head_is_noop(engine_url: str, tmp_path) -> None:

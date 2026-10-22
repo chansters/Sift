@@ -1,7 +1,11 @@
 """Newsletter ingestion tests: extraction, IMAP poll, mail accounts API, story intro."""
 
 import imaplib
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from email.utils import format_datetime
+from typing import Any
 
 import numpy as np
 import pytest
@@ -11,9 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tests.conftest import setup_admin
 
 from app.core.config import settings
-from app.models import Article, Feed, MailAccount, Story
-from app.services import cluster, mailnews
+from app.models import Article, Feed, MailAccount, Story, UserFeed
+from app.services import cluster, llm_client, mailnews
 from app.services.vectorstore import InMemoryVectorStore
+
+# Always computed relative to "now" — a fixed calendar date eventually falls
+# outside the default backfill window (feed_backfill_days) and messages get
+# silently skipped as "old" once enough real time has passed since this was
+# written.
+RECENT_DATE = format_datetime(datetime.now(UTC) - timedelta(hours=1))
 
 # --- sample messages + fake IMAP ----------------------------------------------
 
@@ -35,7 +45,7 @@ qui parle de puces.</li>
 def make_message(
     sender: str = "Tech Café <news@techcafe.example>",
     subject: str = "Hebdo",
-    date: str = "Sun, 06 Sep 2026 13:00:00 +0000",
+    date: str = RECENT_DATE,
     html: str = NEWSLETTER_HTML,
 ) -> bytes:
     m = EmailMessage()
@@ -60,10 +70,10 @@ class FakeIMAP:
             raise imaplib.IMAP4.error("authentication failed")
         self.logged_in = True
 
-    def select(self, folder: str, readonly: bool = False):
+    def select(self, folder: str, readonly: bool = False) -> tuple[str, list[bytes]]:
         return ("OK", [b"1"])
 
-    def uid(self, command: str, *args):
+    def uid(self, command: str, *args: Any) -> tuple[str, list[Any]]:
         if command == "SEARCH":
             uids = b" ".join(str(u).encode() for u in sorted(self.messages))
             return ("OK", [uids])
@@ -83,7 +93,7 @@ def _patch_imap(monkeypatch: pytest.MonkeyPatch, fake: FakeIMAP) -> None:
     monkeypatch.setattr(mailnews, "_imap_connect", lambda host, port, use_ssl: fake)
 
 
-async def _stub_fulltext(session, article, feed) -> None:
+async def _stub_fulltext(session: AsyncSession, article: Article, feed: Feed) -> None:
     """Skip the network: mark full-text as done (state 'fulltext')."""
     article.processing_state = "fulltext"
 
@@ -117,14 +127,14 @@ def _no_clean(monkeypatch: pytest.MonkeyPatch) -> None:
 def _stub_clean_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     """The clean pass is ON by default in settings; stub the free-text LLM call
     to return the body unchanged (nothing filtered) unless a test overrides it."""
-    async def passthrough(system: str, user: str, model: str | None = None):
+    async def passthrough(system: str, user: str, model: str | None = None) -> tuple[str, int]:
         return user, 12
 
-    monkeypatch.setattr(mailnews.llm_client, "chat_text", passthrough)
+    monkeypatch.setattr(llm_client, "chat_text", passthrough)
 
 
 @pytest.fixture(autouse=True)
-def _clear_poll_locks():
+def _clear_poll_locks() -> Iterator[None]:
     """The per-account poll lock is module state — never leak it across tests."""
     yield
     mailnews._polling_accounts.clear()
@@ -201,15 +211,16 @@ async def test_poll_creates_mail_feed_and_articles(
         assert feed.sender_email == "news@techcafe.example"
         assert feed.title == "Tech Café"
         assert feed.url == "newsletter:news@techcafe.example"
+        assert feed.email_count == 1  # one message processed
         articles = (await s.scalars(select(Article).where(Article.feed_id == feed.id))).all()
         assert len(articles) == 2
         assert all(a.newsletter_intro for a in articles)
         assert all(a.processing_state == "fulltext" for a in articles)
         # account from the previous session block is detached — re-query
-        account = await s.scalar(select(MailAccount))
-        assert account is not None
-        assert account.last_uid == 10
-        assert account.last_error is None
+        refetched = await s.scalar(select(MailAccount))
+        assert refetched is not None
+        assert refetched.last_uid == 10
+        assert refetched.last_error is None
 
         # Activity events emitted (invariant 6)
         from app.models import ActivityEvent
@@ -258,7 +269,9 @@ async def test_poll_llm_refinement_and_dedupe(
     _patch_imap(monkeypatch, FakeIMAP({10: make_message(), 11: make_message()}))
     monkeypatch.setattr(mailnews, "_fulltext_batch", _stub_fulltext_batch)
 
-    async def fake_chat_json(system: str, user: str, model: str | None = None):
+    async def fake_chat_json(
+        system: str, user: str, model: str | None = None
+    ) -> tuple[dict[str, Any], int]:
         return {
             "items": [
                 {
@@ -271,7 +284,7 @@ async def test_poll_llm_refinement_and_dedupe(
             ]
         }, 42
 
-    monkeypatch.setattr(mailnews.llm_client, "chat_json", fake_chat_json)
+    monkeypatch.setattr(llm_client, "chat_json", fake_chat_json)
 
     async with db_session() as s:
         account = MailAccount(
@@ -293,6 +306,8 @@ async def test_poll_llm_refinement_and_dedupe(
     async with db_session() as s:
         feed = await s.scalar(select(Feed).where(Feed.kind == "mail"))
         assert feed is not None
+        assert feed.email_count == 2  # both messages processed, even though
+        # their links deduped to the same 2 articles
         articles = (await s.scalars(select(Article).where(Article.feed_id == feed.id))).all()
         # 2 links per message, but the SAME message twice → URL dedupe on 2nd poll
         assert len(articles) == 2
@@ -311,7 +326,9 @@ async def test_extract_pass_maps_without_triage(
     _patch_imap(monkeypatch, FakeIMAP({10: make_message()}))
     monkeypatch.setattr(mailnews, "_fulltext_batch", _stub_fulltext_batch)
 
-    async def fake_chat_json(system: str, user: str, model: str | None = None):
+    async def fake_chat_json(
+        system: str, user: str, model: str | None = None
+    ) -> tuple[dict[str, Any], int]:
         return {
             "items": [
                 {
@@ -323,7 +340,7 @@ async def test_extract_pass_maps_without_triage(
             ]
         }, 42
 
-    monkeypatch.setattr(mailnews.llm_client, "chat_json", fake_chat_json)
+    monkeypatch.setattr(llm_client, "chat_json", fake_chat_json)
 
     async with db_session() as s:
         account = MailAccount(
@@ -353,7 +370,7 @@ def test_self_referential_prefilter() -> None:
     """
     msg = mailnews.parse_message(1, make_message(html=html))
     assert msg is not None
-    _drop = mailnews._drop_self_referential(msg)
+    mailnews._drop_self_referential(msg)
     urls = [c.url for c in msg.candidates]
     assert not any("patreon.com" in u for u in urls)
     assert "https://news.example.com/story" in urls
@@ -399,11 +416,11 @@ async def test_clean_pass_filters_chrome_links(
     _patch_imap(monkeypatch, FakeIMAP({10: make_message(html=html)}))
     monkeypatch.setattr(mailnews, "_fulltext_batch", _stub_fulltext_batch)
 
-    async def fake_chat_text(system: str, user: str, model: str | None = None):
+    async def fake_chat_text(system: str, user: str, model: str | None = None) -> tuple[str, int]:
         # the model deletes the social paragraph and garbles one token
         return "Real news [here](«L1»).\n\nMore news [there](«L2»). [«L99»]", 55
 
-    monkeypatch.setattr(mailnews.llm_client, "chat_text", fake_chat_text)
+    monkeypatch.setattr(llm_client, "chat_text", fake_chat_text)
 
     async with db_session() as s:
         account = MailAccount(
@@ -448,10 +465,12 @@ async def test_clean_pass_failure_keeps_all_candidates(
     _patch_imap(monkeypatch, FakeIMAP({10: make_message()}))
     monkeypatch.setattr(mailnews, "_fulltext_batch", _stub_fulltext_batch)
 
-    async def failing_chat_text(system: str, user: str, model: str | None = None):
-        raise mailnews.llm_client.LLMError("boom")
+    async def failing_chat_text(
+        system: str, user: str, model: str | None = None
+    ) -> tuple[str, int]:
+        raise llm_client.LLMError("boom")
 
-    monkeypatch.setattr(mailnews.llm_client, "chat_text", failing_chat_text)
+    monkeypatch.setattr(llm_client, "chat_text", failing_chat_text)
 
     async with db_session() as s:
         account = MailAccount(
@@ -497,7 +516,7 @@ async def test_first_sync_backfill_window(
     _no_refine(monkeypatch)
     monkeypatch.setattr(settings, "feed_backfill_days", 7)
     old = make_message(date="Sun, 01 Jan 2023 13:00:00 +0000")
-    new = make_message(date="Sun, 06 Sep 2026 13:00:00 +0000")
+    new = make_message(date=RECENT_DATE)
     _patch_imap(monkeypatch, FakeIMAP({1: old, 2: new}))
     monkeypatch.setattr(mailnews, "_fulltext_batch", _stub_fulltext_batch)
 
@@ -523,16 +542,18 @@ async def test_new_story_prefers_newsletter_intro(
     store = InMemoryVectorStore()
     monkeypatch.setattr(cluster, "get_vector_store", lambda session=None: store)
 
-    async def fake_chat_json(system: str, user: str, model: str | None = None):
+    async def fake_chat_json(
+        system: str, user: str, model: str | None = None
+    ) -> tuple[dict[str, Any], int]:
         return {"headline": "Un titre"}, 10
 
-    async def fake_embed(texts: list[str], model: str | None = None):
+    async def fake_embed(texts: list[str], model: str | None = None) -> list[list[float]]:
         v = np.zeros(1024, dtype=np.float32)
         v[0] = 1.0
         return [v.tolist() for _ in texts]
 
-    monkeypatch.setattr(cluster.llm_client, "chat_json", fake_chat_json)
-    monkeypatch.setattr(cluster.llm_client, "embed", fake_embed)
+    monkeypatch.setattr(llm_client, "chat_json", fake_chat_json)
+    monkeypatch.setattr(llm_client, "embed", fake_embed)
 
     async with db_session() as s:
         feed = Feed(url="newsletter:n@x.example", kind="mail", sender_email="n@x.example")
@@ -667,6 +688,8 @@ async def test_refresh_rejects_mail_feed(
     async with db_session() as s:
         feed = Feed(url="newsletter:n@x.example", kind="mail", sender_email="n@x.example")
         s.add(feed)
+        await s.flush()
+        s.add(UserFeed(user_id=1, feed_id=feed.id))
         await s.commit()
         feed_id = feed.id
     r = await client.post(f"/api/feeds/{feed_id}/refresh")
@@ -676,3 +699,154 @@ async def test_refresh_rejects_mail_feed(
     listed = {f["id"]: f for f in r.json()}
     assert listed[feed_id]["kind"] == "mail"
     assert listed[feed_id]["sender_email"] == "n@x.example"
+
+
+async def test_extract_batches_large_candidate_lists(
+    db_session: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When candidates exceed EXTRACT_BATCH_SIZE (12), refine runs in chunks,
+    and a failure in one chunk still preserves the other chunks."""
+    call_counts = 0
+
+    async def fake_chat_json(
+        system: str, user: str, model: str | None = None
+    ) -> tuple[dict[str, Any], int]:
+        nonlocal call_counts
+        call_counts += 1
+        if call_counts == 2:
+            # Batch 2 fails with LLMError
+            raise llm_client.LLMError("Simulated LLM failure for batch 2")
+        # Extract URLs from the prompt user text lines
+        items = []
+        for line in user.splitlines():
+            if line.startswith("- URL: "):
+                url = line.split("- URL: ")[1].strip()
+                items.append({"url": url, "title": f"Title for {url}", "intro": f"Intro for {url}"})
+        return {"items": items}, 25
+
+    monkeypatch.setattr(llm_client, "chat_json", fake_chat_json)
+
+    candidates = [
+        mailnews.LinkCandidate(
+            url=f"https://example.com/link-{i}",
+            anchor=f"Link {i}",
+            context=f"Context {i}",
+        )
+        for i in range(25)  # 25 candidates -> 3 batches of (12, 12, 1)
+    ]
+    msg = mailnews.NewsletterMessage(
+        uid=1,
+        sender_email="news@example.com",
+        sender_name="News",
+        subject="Big issue",
+        date=None,
+        html="<p></p>",
+        candidates=candidates,
+    )
+
+    async with db_session() as s:
+        out = await mailnews._refine_with_llm(s, msg, candidates)
+
+    assert call_counts == 3
+    # 25 items: batch 1 (12) ok, batch 2 (12) failed, batch 3 (1) ok -> 13 extracted
+    assert len(out) == 13
+    assert "https://example.com/link-0" in out
+    assert "https://example.com/link-12" not in out  # batch 2 item failed
+    assert "https://example.com/link-24" in out  # batch 3 item succeeded
+
+
+def test_poll_lock_expires_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The poll lock auto-expires after POLL_LOCK_TIMEOUT_S so a crashed or hung
+    worker doesn't block the account forever."""
+    mailnews.end_poll(999)
+    current_time = 1000.0
+    monkeypatch.setattr(mailnews.time, "monotonic", lambda: current_time)
+
+    assert mailnews.try_begin_poll(999) is True
+    # Still within 30 min window -> busy
+    current_time += 100.0
+    assert mailnews.try_begin_poll(999) is False
+
+    # After 30 minutes (1800s) -> lock expires and allows acquiring
+    current_time += 1801.0
+    assert mailnews.try_begin_poll(999) is True
+    mailnews.end_poll(999)
+
+
+
+# --- IMAP credentials over a real socket ---------------------------------------
+
+
+class _AuthServer:
+    """Tiny IMAP server speaking just enough for login: records how credentials arrived."""
+
+    def __init__(self) -> None:
+        import socket
+        import threading
+
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port: int = self.sock.getsockname()[1]
+        self.seen: list[tuple[str, str, str]] = []  # (mechanism, username, password)
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self) -> None:
+        import base64
+
+        conn, _ = self.sock.accept()
+        with conn, conn.makefile("rb") as reader:
+            conn.sendall(b"* OK ready\r\n")
+            while line := reader.readline():
+                tag, _, rest = line.decode("utf-8").strip().partition(" ")
+                cmd, _, args = rest.partition(" ")
+                if cmd.upper() == "CAPABILITY":
+                    conn.sendall(f"* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n{tag} OK done\r\n".encode())
+                elif cmd.upper() == "LOGIN":
+                    import shlex
+
+                    user, password = shlex.split(args.replace("\\", "\\\\"))
+                    self.seen.append(("LOGIN", user, password))
+                    conn.sendall(f"{tag} OK logged in\r\n".encode())
+                elif cmd.upper() == "AUTHENTICATE":
+                    conn.sendall(b"+ \r\n")
+                    blob = base64.b64decode(reader.readline().strip())
+                    _, user, password = (part.decode("utf-8") for part in blob.split(b"\0"))
+                    self.seen.append(("PLAIN", user, password))
+                    conn.sendall(f"{tag} OK authenticated\r\n".encode())
+                elif cmd.upper() == "LOGOUT":
+                    conn.sendall(f"* BYE\r\n{tag} OK bye\r\n".encode())
+                    return
+                else:
+                    conn.sendall(f"{tag} OK\r\n".encode())
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+@pytest.mark.parametrize(
+    ("username", "password", "mechanism"),
+    [
+        ("reader@example.test", "plain-ascii", "LOGIN"),
+        ("reader@example.test", "p&ss+w=rd;#%25 x", "LOGIN"),
+        ("reader@example.test", "pässwörd-é-日本", "PLAIN"),
+        ("rédacteur@example.test", "ascii-pass", "PLAIN"),
+    ],
+)
+def test_imap_login_handles_complex_credentials(
+    username: str, password: str, mechanism: str
+) -> None:
+    server = _AuthServer()
+    try:
+        imap = mailnews._imap_connect("127.0.0.1", server.port, False)
+        mailnews._imap_login(imap, username, password)
+        imap.logout()
+    finally:
+        server.close()
+    assert server.seen == [(mechanism, username, password)]
+
+
+def test_imap_login_rejects_nul_characters() -> None:
+    with pytest.raises(ValueError):
+        mailnews._imap_login(None, "user", "pa\0ss")  # type: ignore[arg-type]

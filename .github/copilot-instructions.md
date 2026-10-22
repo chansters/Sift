@@ -28,6 +28,18 @@ the full normative spec — **read it before non-trivial changes**.
 
 ## Invariants — never break these
 
+0. **NEVER HARDCODE OR TAKE SHORTCUTS (RULE NUMBER ONE)**: Never introduce
+   hardcoded values, specific cities/regions (e.g. 'Lyon', 'Paris'), language-specific
+   keywords or query terms (e.g. 'presse', 'quotidien', 'zeitung', 'prensa'), publication
+   names (e.g. 'Le Progrès'), regional aliases, or ad-hoc heuristics to 'help' solve a
+   particular problem or patch a feature. If you are not sure or think code needs manual
+   assistance, **NEVER assume or shortcut — ASK THE USER**. All discovery, ranking,
+   querying, and pipeline processing must be completely generic, domain-agnostic,
+   and driven by structured LLM prompts, standard protocols, or user settings.
+   *User-approved exception:* the fixed list of 13 discovery categories mapped to the
+   feed directory's topic identifiers (`CATEGORY_TOPICS` in `services/feed_directory.py`,
+   mirrored in the Apple app and web modal) and the web modal's region/language list are
+   API identifiers, not heuristics. Free text is never mapped; it is passed through as-is.
 1. **Language**: all summaries are written in the configured `SUMMARY_LANGUAGE`
    (default English, per-user override). Never hardcode English. GUI chrome is
    English-only for now.
@@ -36,9 +48,11 @@ the full normative spec — **read it before non-trivial changes**.
    Changing language or embedding model requires the full reprocessing job.
 3. **Story versioning**: `story.version` bumps **only** on real content change
    (new facts). A source-only attachment updates `last_updated_at` but not `version`.
-4. **Read state is per-user**: `STORY_STATE(user_id, story_id, read_at_version)`.
-   `updated_since_read = is_read AND story.version > read_at_version`. Never surface a
-   read story as unread again — badge it "updated".
+4. **Read state and feed subscriptions are per-user**: `STORY_STATE(user_id, story_id, read_at_version)`
+   and `USER_FEED(user_id, feed_id)`. Feeds and articles are deduplicated and clustered
+   into Stories globally once; each user's story list is scoped to stories that contain
+   at least one source article from their subscribed feeds. `updated_since_read = is_read AND story.version > read_at_version`.
+   Never surface a read story as unread again — badge it "updated".
 5. **Configurability**: thresholds, freeze window, retention days, poll intervals,
    failure policy, categories — all live in settings/env, never hardcoded. Categories
    are a customizable taxonomy stored in the DB; the LLM prompt is built from the
@@ -76,6 +90,22 @@ the full normative spec — **read it before non-trivial changes**.
 - **API changes**: update the endpoint table in SPEC.md §6.
 - **Config keys**: every new setting in `core/config.py` must also be added to
   `docker/.env.example` (commented out, with a one-line doc) in the same change.
+
+## GUI strings and localization
+
+The **web GUI is English-only by design** (SPEC non-goal: localized GUI) — keep new web strings short,
+plain and in one place so they are easy to localize later. But every GUI feature that also appears in
+the native apps is **localized there in all 10 languages** (`de es fr it ja ko pt zh-Hans zh-Hant`) in the Shared
+**and** NewsGatorMac/NewsGatorIOS `Localizable.xcstrings`; see the "Localization" checklist in
+`Newsgator-Apple/.github/copilot-instructions.md` and run `Newsgator-Apple/scripts/check-localizations.py`.
+Never finish a GUI change without doing this.
+
+## In-app help (Apple apps only)
+
+App help (Chat → "App help") is an Apple-app feature: the knowledge bundle lives in
+`Newsgator-Apple/NewsGatorCore/Sources/NewsGatorCore/Resources/Knowledge/` and is answered
+on-device. The server has **no** docs mode. When a server change alters something the native apps
+expose to users, update that bundle (see `Newsgator-Apple/.github/copilot-instructions.md`).
 
 ## Current status
 
@@ -133,10 +163,13 @@ over them; horizontal page overflow is clipped once at the html level
 (`overflow-x: clip` in `+layout.svelte` — on html, never body, so
 position:sticky keeps working).
 Dark mode follows the OS via
-`prefers-color-scheme`: all colors are CSS custom properties defined in
-`routes/+layout.svelte` (`--bg`/`--surface`/`--text`/`--accent`/…) with a
-dark override block — never hardcode hex colors in component styles;
-`app.html` carries `color-scheme` + media-scoped `theme-color` metas.
+`prefers-color-scheme`: all design tokens and colors are centralized in
+`src/lib/theme.css` ("Editorial Gator" concept: Forest green `--gator-forest` `#146B3A`,
+deep contrast `--gator-forest-dark` `#0B3D2A`, Gator Gold `--gator-gold` `#F2B827`
+for freshness/unread signal dots, warm Paper `--gator-paper` `#F8F7F1` with dark forest
+night palette in dark mode, `--radius-card` 19px, segmented pill filters). Imported in
+`+layout.svelte`; never hardcode hex colors in component styles;
+`app.html` carries `color-scheme` + media-scoped `theme-color` metas (`#F8F7F1` light / `#121815` dark).
 Mobile layout rule: nothing may overflow the viewport horizontally (it
 side-scrolls the whole PWA, nav included) — the single enforcement point is
 `overflow-x: hidden; overflow-x: clip` on `:global(html)` in
@@ -159,7 +192,7 @@ next to the "Stories" title inside the sticky header so it never scrolls away
 deckmeta counter), and marking a story read
 in the desktop list smooth-scrolls down (`scrollPastStory`, desktop only) so
 the dimmed card slides out behind the header and the next story lands right
-under it. Source logos in card meta rows: `GET /api/stories` returns `source_hosts` (distinct article
+under it. Source logos in card meta rows: `GET /api/stories` (optional `limit`/`offset` paging; hosts and translations are computed only for the returned page) returns `source_hosts` (distinct article
 hosts per story, ≤5) and the GUI renders them via a cached, auth-protected
 favicon proxy `GET /api/favicon?host=` (`api/favicons.py`; `_fetch_favicon`
 is the monkeypatch seam; `FAVICON_CACHE_HOURS`, failures cached 1h) — never a
@@ -334,8 +367,9 @@ GUI "Poll now" request forever), and polling is split search/fetch:
 `mail_fetch_error` events + `account.last_error`. The scheduler's
 `poll_account` still uses the combined `fetch_new_messages` (search+fetch).
 IMAP seam `_imap_connect` is module-level for monkeypatching.
-One poll at a time per account (`_polling_accounts` set in mailnews.py,
-`try_begin_poll`/`end_poll`): the poll-now endpoint holds it from the search
+One poll at a time per account (`_polling_accounts` dict in mailnews.py,
+`try_begin_poll`/`end_poll` with a 30-min auto-expiry `POLL_LOCK_TIMEOUT_S = 1800`
+and `asyncio.timeout` guard): the poll-now endpoint holds it from the search
 phase until the background task finishes (released in a `finally`, 409 while
 busy) and the scheduler's `poll_account` silently skips a busy account — the
 UID watermark only advances per processed message, so a concurrent poll would
@@ -361,9 +395,10 @@ Deletion-only filtering is far more reliable for small
 models than one-pass triage — measured on Tech Café: 0 junk / 0 lost vs. 17
 junk kept one-pass. Pass 2 (`prompts.newsletter_extract`, config
 `NEWSLETTER_LLM_EXTRACT`, usage kind `newsletter_extract`) is pure text
-mapping — NO triage (a stale `keep:false` field is ignored): each SURVIVING
-link gets a composed title (never just the anchor's domain name) + the
-human-written intro —
+mapping — NO triage (a stale `keep:false` field is ignored): candidates are
+sliced in chunks of `EXTRACT_BATCH_SIZE = 12` so prompts stay small and failures
+in one chunk don't forfeit the others; each SURVIVING link gets a composed title
+(never just the anchor's domain name) + the human-written intro —
 validated against the code-extracted URL set (hallucinated URLs dropped),
 heuristic block-text fallback (`_fallback_intro`). Pass 1 uses
 `llm_client.chat_text` (free-form, no JSON mode/retry — same trace/usage
@@ -432,6 +467,99 @@ desc, hard cap `_IN_FLIGHT_CAP = 500` with a `truncated` flag) followed by the
 20 most recent finished ones (`_FINISHED_ROWS`) — no more "60 newest articles"
 window that hid old re-queued items. The response adds `in_flight` and
 `truncated`; the Activity page header shows the in-flight count.
+OPML export (2026-09-14): `GET /feeds/export-opml` (admin) mirrors the
+existing OPML import — `services/ingest.py::render_opml()` emits OPML 2.0
+from all RSS-kind feeds (mail feeds excluded, their pseudo-URL isn't a real
+feed URL); Feeds page has an "Export OPML" button next to the importer.
+`feed.email_count` (2026-09-14, Alembic 0013): mail feeds only, incremented
+once per newsletter message processed in `mailnews._process_message()`
+(regardless of how many links it yielded) so admins can spot a
+stalled/broken newsletter feed; surfaced in `GET /feeds` and the Feeds page
+next to the newsletter badge.
+Category suggestions (2026-09-14, Alembic 0014): the summarize LLM call
+(`prompts.summarize_article`) may return an optional `suggested_category`
+when none of the current taxonomy fits well (explicitly prompted to only do
+so for a genuinely uncovered recurring topic, not a loose fit) — logged
+per-article by `services/process.py::summarize_article` via
+`services/category_suggestions.py::record_suggestion` into the
+`category_suggestion` table (no FK, append-only audit log like
+`llm_usage`/`chat_message` — survives article retention), **never
+auto-applied**. Grouping is exact-ish, not semantic: `normalize()` lowercases
++ strips punctuation/whitespace so "Apple"/"apple."/" Apple " collapse but NOT
+"Apple" vs "Apple Inc." (a follow-up could cluster via `EMBED_MODEL` cosine
+similarity — not implemented). `GET /categories/suggestions` (admin)
+aggregates recurring proposals (`>= CATEGORY_SUGGESTION_MIN_ARTICLES` distinct
+articles within `CATEGORY_SUGGESTION_WINDOW_DAYS`, dismissed clusters
+excluded via `category_proposal_dismissal`) into
+`[{normalized_text, label, article_count, first_seen, last_seen,
+example_titles}]`, most-suggested first. Settings page shows them under the
+Categories card: **Add as category** (`POST /suggestions/accept` — creates
+the `Category`, then purges that cluster's suggestion log; no
+reclassification of past articles) or **Dismiss**
+(`POST /suggestions/dismiss` — suppresses the cluster going forward). Toggle
+`CATEGORY_SUGGESTIONS_ENABLED`; all three settings whitelisted like the rest.
+Third-party reader API ingestion (2026-09-23, Alembic 0015): per-user reader
+accounts (`reader_account` table: user_id/provider/api_base_url/username/password/
+auth_token/is_enabled/virtual_feed_id/sync_cursor), `feed.kind` `reader_api`
+(virtual feed e.g. "Inoreader" with pseudo-URL `reader:{provider}:{account_id}`),
+and `article.origin_feed_title` capturing the original subscription title
+from the reader service. Router `api/reader_accounts.py` (`/reader-accounts`,
+current_user-scoped; test/poll endpoints). Service `services/readers/`:
+Google Reader API client (`greader.py`, covering Inoreader, FreshRSS, Miniflux,
+The Old Reader, BazQux) and sync engine (`sync.py`). Entries are resolved to
+their canonical publisher URLs, articles processed through the standard pipeline.
+Bidirectional read-state: marking a story read/unread in `api/stories.py` pushes
+read/unread to the reader API for member reader articles via `edit-tag`; inbound
+sync marks single-source stories read or multi-source stories "Updated"
+(`read_at_version = story.version - 1`). Scheduler `reader_poll_sweep` (every
+`READER_POLL_MINUTES`, default 15). Legacy stamps: 0015 top entry keyed on
+`("reader_account", "sync_cursor")`.
+User-scoped feed subscriptions (2026-09-23, Alembic 0016): `user_feed` join table
+(user_id PK FK, feed_id PK FK, created_at). Feeds, articles, summaries, embeddings,
+and clustering remain global (computed once). Feeds CRUD (`/api/feeds`) and OPML
+import/export now open to all authenticated users (`current_user`). `GET /feeds` returns
+feeds subscribed by the current user; adding an existing feed URL subscribes the user;
+deleting unsubscribes the user, pruning the feed only when zero subscribers remain across
+all users. `GET /api/stories` and `GET /api/stories/feed-options` are scoped to stories
+having >= 1 source article from the user's subscribed feeds (`GET /api/stories/{id}`
+404s if the user is not subscribed to any member feeds). Legacy stamps: 0016 top entry
+keyed on `("user_feed", "user_id")`.
+Multi-language story summary translations (2026-09-23, Alembic 0017 & 0018):
+per-user summary language translations (`story_translation` table:
+story_id/language/version/title/summary/created_at; `story.language` column tracks
+canonical source language). Canonical story headlines and summaries are generated
+in the source article's detected language, avoiding translation drift. When users
+view stories or RSS feeds in a different language, `GET /api/stories`, `GET /api/feed.xml`,
+and `GET /api/stories/{id}` serve cached translations. Missing or outdated translations
+are pre-warmed via a background translation worker (`services/translation.py`, triggered
+on story creation, version bumps in clustering, manual merge, and when users update
+`summary_language`), or translated JIT on story detail fetch. Legacy stamps: 0018 top
+entry keyed on `("story", "language")`.
+Per-user saved stories (2026-09-30, Alembic 0019): `story_state.saved_at`
+stores a save/unsave flag orthogonal to read state. `PUT /api/stories/{id}/saved`
+and `DELETE /api/stories/{id}/saved` are idempotent, return `{saved, saved_at}`,
+and never change `read_at_version`; a saved-only `StoryState` row must still read
+as unread (`is_read = false`). `GET /api/stories?saved=true` composes with the
+existing list filters, and story list/detail payloads include `saved` + `saved_at`.
+Saved stories are exempt from retention purging (including member
+articles/revisions/vectors). Web GUI: a gold star toggle in story rows/detail, a
+Saved filter pill, and swipe-down save on the mobile deck. Legacy stamps: 0019 top
+entry keyed on `("story_state", "saved_at")`.
+
+Story-list payload diet (2026-10-07): the web Stories page used to fetch the full
+`GET /api/stories` list twice (once filtered, once `filter=all`) just to compute the
+filter-pill counts. It now calls `GET /api/stories/counts` (`{all, unread, updated,
+saved}`, optional `category`/`feed`; selects only `Story.id/version`, no summaries) —
+one list request instead of two. No schema change.
+
+Story-list SQL push-down (2026-10-20, Alembic 0023): `GET /api/stories`, `/counts`, `/facets`
+and `/widget-snapshot` no longer load every `Story` row / article `story_id` into Python.
+Visibility (user's feeds), read/updated/saved flags, category, `since`, ordering
+(published / sources / updated) and `limit`/`offset` are all done in SQL
+(`_filtered_stories` in `api/stories.py`; keep `_flag_conditions` in sync with `_flags`);
+only the returned page is hydrated (`_page_items`). New covering index
+`ix_article_story_dates (story_id, published_at, fetched_at)`. Measured on 8k stories:
+prod 1.3–4.6s per call → ~20–250ms.
 
 Notes on the current code:
 - Backend lives in `backend/src/app/` (`api/`, `core/`, `models/`, `services/`,
@@ -446,12 +574,16 @@ Notes on the current code:
   vector store is patched via `get_vector_store` on each importing module.
 - Scheduler (`workers/scheduler.py`): 1-min feed tick, hourly freeze + activity prune,
   nightly retention (03:17), and a backlog sweep every `BACKLOG_SWEEP_MINUTES`
-  (default 5) requeuing articles stuck in `fulltext`. Articles are handed to the LLM
-  queue only **after** the ingest commit — the worker reads through a fresh session,
-  so enqueuing pre-commit silently drops them. Lifespan starts the LLM worker +
-  backlog requeue + scheduler (skipped when `ENVIRONMENT=test`). `queue_depth()`
-  in `process.py` counts queued articles **plus the in-flight one** (`_in_flight`)
-  — otherwise the indicator drops to 0 while the LLM is actually busy.
+  (default 30) requeuing articles stuck in any unclustered state (`fetched`, `fulltext`,
+  `summarized`, `embedded`). `process_article` is guarded by
+  `ARTICLE_PROCESS_TIMEOUT_MINUTES` (default 15; logs `process_timeout` activity event
+  on expiration) and progressively resumes from whichever stage the article reached
+  (invariant 7). Articles are handed to the LLM queue only **after** the ingest
+  commit — the worker reads through a fresh session, so enqueuing pre-commit
+  silently drops them. Lifespan starts the LLM worker + backlog requeue + scheduler
+  (skipped when `ENVIRONMENT=test`). `queue_depth()` in `process.py` counts queued
+  articles **plus the in-flight one** (`_in_flight`) — otherwise the indicator
+  drops to 0 while the LLM is actually busy.
 - Lifespan migrates the schema to Alembic head at startup (`alembic upgrade head`
   via subprocess; legacy create_all DBs without `alembic_version` are stamped at
   the matching revision first), then `create_all` stays as a no-op safety net +
@@ -464,11 +596,47 @@ Notes on the current code:
 - Frontend: SvelteKit 5 runes + adapter-node; dev proxy `/api → :8000` in
   `frontend/vite.config.ts`, production proxy in `frontend/src/hooks.server.ts`
   (`BACKEND_URL`).
-- Project site (2026-08-28): `docs/index.html` is a self-contained GitHub Pages
-  landing page (serve `main` /`docs`); screenshots in `docs/assets/shots/` are
-  captured against a seeded demo DB, never the production instance. Regenerate:
+- Project site (2026-09-24 redesign): `docs/index.html` is a self-contained GitHub
+  Pages landing page (serve `main` /`docs`), rewritten to the light "Editorial
+  Gator" palette (`--forest #146B3A`, `--gold #F2B827`, `--paper #F8F7F1` — same
+  tokens as `frontend/src/lib/theme.css`, hand-copied since this is a standalone
+  static file with no build step) with a Newsreader serif display font + Inter
+  body, replacing the old dark neon-green "hacker" theme. `docs/assets/logo.png`
+  is the real app icon (`Alligator.png`, copied byte-for-byte from
+  `Newsgator-Apple/NewsGatorShared/Sources/NewsGatorShared/Resources/Alligator.png`
+  — never redraw it, never edit it). The four core value props are their own
+  `#highlights` section (each with a real screenshot, alternating left/right):
+  01 merge duplicate coverage into one Story, 02 the honest 60-second summary,
+  03 "Read Original Source" always sends readers to the real publisher page
+  (ads intact — no paywall circumvention, invariant 8), 04 the standalone
+  Apple Intelligence engine needs no server. A `#modes` section contrasts
+  the self-hosted server vs. the `Newsgator-Apple` standalone mode, plus a
+  narrative block explaining that one Apple-Intelligence-capable device per
+  household is enough (iCloud sync, no coordinator device — see
+  `Newsgator-Apple/.github/copilot-instructions.md`). Product screenshots
+  (`#usage`) are split by platform: the web-app subsection currently uses
+  dashed placeholder frames (`.shot .placeholder`, no image — the previous
+  dark-navbar shots in `docs/assets/shots/` no longer match the current GUI
+  and are kept on disk but unreferenced; replace the placeholders once new
+  light-theme web app screenshots are captured, see the demo-seeding
+  instructions below) and the native-app subsection uses real English
+  light-mode screenshots copied from `Newsgator-Apple/docs/screenshots/en/`
+  into `docs/assets/apple/` (downscaled with `sips --resampleWidth` to keep
+  the page light — Mac shots at 1400px, iPhone shots at 700px; `mac-chat.png`
+  is additionally cropped to drop empty conversation whitespace below the
+  single exchange). CTAs link to both `github.com/Tekka90/NewsGator` (server)
+  and `github.com/Tekka90/Newsgator-Apple` (native app) throughout.
+  Screenshots in `docs/assets/shots/` are captured against a seeded demo DB,
+  never the production instance. Regenerate:
   `backend/src/app/scripts/seed_demo.py` writes fake feeds/stories/activity/usage
   (login `admin`/`demo1234`) + SVG lead images under `backend/demo_assets/`
   (gitignored; serve via `python -m http.server 8899 --directory demo_assets`),
   run the backend with `DATABASE_URL=sqlite+aiosqlite:///<abs path>/demo.db`
   (absolute — the DB lands in the process cwd otherwise) and `ENVIRONMENT=test`.
+
+YouTube + context budgeting (backend done): `services/youtube.py` is the only YouTube-aware
+module (URL rules, innertube player, captions → paragraphs, filtering, oEmbed, channel
+resolution, Takeout CSV). `services/llm_budget.py` + `services/condense.py` replace the old
+`text[:8000]` truncation with map-reduce condensation sized by `LLM_CONTEXT_TOKENS`.
+`POST /feeds/import-subscriptions` imports Takeout CSV or OPML. Shared vectors for the Swift
+side: `backend/tests/fixtures/youtube_vectors.json`. Tests: `tests/test_youtube.py`.

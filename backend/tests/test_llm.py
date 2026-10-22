@@ -9,7 +9,7 @@ from sqlalchemy import select
 from tests.test_ingest import _make_feed
 
 from app.core.config import settings
-from app.models import SEED_CATEGORIES, ActivityEvent, Article, Category
+from app.models import SEED_CATEGORIES, ActivityEvent, Article, Category, CategorySuggestion
 from app.services import cluster, llm_client, process, prompts
 from app.services.vectorstore import InMemoryVectorStore, cosine_similarity
 
@@ -116,6 +116,11 @@ def test_prompt_language_never_hardcoded(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "English" not in system + user
 
 
+def test_prompt_requests_suggested_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    _system, user = prompts.summarize_article("T", "x", ["Tech", "World"])
+    assert "suggested_category" in user
+
+
 # --- processing pipeline ---
 
 
@@ -191,12 +196,142 @@ async def test_process_article_summarize_and_embed(
         assert "cluster_new" in actions
 
 
+async def test_process_article_records_category_suggestion(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """suggested_category outside the taxonomy is logged, not auto-applied."""
+    _mock_llm(monkeypatch)
+
+    async def fake_chat_json(system: str, user: str, model: str | None = None):
+        if "headline" in user.lower():
+            return {"headline": "Story headline"}, 5
+        return {"summary": "A summary.", "category": "Tech", "suggested_category": "Apple"}, 42
+
+    monkeypatch.setattr(process.llm_client, "chat_json", fake_chat_json)
+
+    async with db_session() as s:
+        if await s.scalar(select(Category.id).limit(1)) is None:
+            s.add_all([Category(name=n) for n in SEED_CATEGORIES])
+            await s.commit()
+
+    article = await _article_in_state(db_session, "fulltext")
+
+    async with db_session() as s:
+        await process.process_article(s, article.id)
+
+    async with db_session() as s:
+        rows = (await s.scalars(select(CategorySuggestion))).all()
+        assert len(rows) == 1
+        assert rows[0].article_id == article.id
+        assert rows[0].raw_text == "Apple"
+        assert rows[0].normalized_text == "apple"
+
+
+async def test_process_article_skips_suggestion_matching_taxonomy(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A suggestion that (loosely) matches an existing category isn't logged."""
+    _mock_llm(monkeypatch)
+
+    async def fake_chat_json(system: str, user: str, model: str | None = None):
+        if "headline" in user.lower():
+            return {"headline": "Story headline"}, 5
+        return {"summary": "A summary.", "category": "Tech", "suggested_category": "tech."}, 42
+
+    monkeypatch.setattr(process.llm_client, "chat_json", fake_chat_json)
+
+    async with db_session() as s:
+        if await s.scalar(select(Category.id).limit(1)) is None:
+            s.add_all([Category(name=n) for n in SEED_CATEGORIES])
+            await s.commit()
+
+    article = await _article_in_state(db_session, "fulltext")
+
+    async with db_session() as s:
+        await process.process_article(s, article.id)
+
+    async with db_session() as s:
+        rows = (await s.scalars(select(CategorySuggestion))).all()
+        assert rows == []
+
+
 async def test_process_article_skips_wrong_state(db_session) -> None:
-    article = await _article_in_state(db_session, "fetched")
+    article = await _article_in_state(db_session, "clustered")
     async with db_session() as s:
         await process.process_article(s, article.id)  # no-op
         a = await s.get(Article, article.id)
-        assert a is not None and a.processing_state == "fetched"
+        assert a is not None and a.processing_state == "clustered"
+
+
+async def test_process_article_resumes_from_summarized(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An article in 'summarized' state skips summarize and proceeds to embed/cluster."""
+    _mock_llm(monkeypatch)
+
+    summarize_called = False
+
+    async def fake_chat_json(system: str, user: str, model: str | None = None):
+        nonlocal summarize_called
+        if "headline" in user.lower():
+            return {"headline": "Story headline"}, 5
+        summarize_called = True
+        return {"summary": "A summary.", "category": "Tech"}, 42
+
+    monkeypatch.setattr(process.llm_client, "chat_json", fake_chat_json)
+
+    async with db_session() as s:
+        if await s.scalar(select(Category.id).limit(1)) is None:
+            s.add_all([Category(name=n) for n in SEED_CATEGORIES])
+            await s.commit()
+
+    article = await _article_in_state(db_session, "summarized")
+    async with db_session() as s:
+        # Pre-set summary and category as summarize_article would have
+        a = await s.get(Article, article.id)
+        assert a is not None
+        a.summary = "Pre-existing summary"
+        a.category = "Tech"
+        a.language = "en"
+        await s.commit()
+
+    async with db_session() as s:
+        await process.process_article(s, article.id)
+        a = await s.get(Article, article.id)
+        assert a is not None
+        assert a.processing_state == "clustered"
+        assert a.summary == "Pre-existing summary"
+        assert not summarize_called
+
+
+async def test_process_article_timeout_emits_error_and_preserves_state(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Article processing timeout logs an error activity and leaves state retryable."""
+    async def slow_chat(*args, **kwargs):
+        raise TimeoutError("LLM call timed out")
+
+    monkeypatch.setattr(process.llm_client, "chat_json", slow_chat)
+
+    async with db_session() as s:
+        if await s.scalar(select(Category.id).limit(1)) is None:
+            s.add_all([Category(name=n) for n in SEED_CATEGORIES])
+            await s.commit()
+
+    article = await _article_in_state(db_session, "fulltext")
+    async with db_session() as s:
+        await process.process_article(s, article.id)
+
+    async with db_session() as s:
+        a = await s.get(Article, article.id)
+        assert a is not None
+        assert a.processing_state == "fulltext"
+        actions = (
+            await s.scalars(
+                select(ActivityEvent.action).where(ActivityEvent.level == "error")
+            )
+        ).all()
+        assert "process_timeout" in actions
 
 
 async def test_summarize_llm_error_leaves_retryable(
@@ -238,15 +373,29 @@ async def test_summarize_llm_error_leaves_retryable(
 
 
 async def test_enqueue_backlog_recovers_stuck_articles(db_session) -> None:
-    stuck = await _article_in_state(db_session, "fulltext")
-    await _article_in_state(db_session, "embedded")
-    # Fresh session: the helper's session is closed, so backlog sweep must see it
+    # Clear any leftover queue state
+    while not process._queue.empty():
+        process._queue.get_nowait()
+    process._queued_ids.clear()
+
+    stuck_fetched = await _article_in_state(db_session, "fetched")
+    stuck_fulltext = await _article_in_state(db_session, "fulltext")
+    stuck_summarized = await _article_in_state(db_session, "summarized")
+    stuck_embedded = await _article_in_state(db_session, "embedded")
+    await _article_in_state(db_session, "clustered")
+
     async with db_session() as s:
         n = await process.enqueue_backlog(s)
-    assert n == 1
-    assert process.queue_depth() == 1
+        pending = await process.count_pending(s)
+    assert n == 4
+    assert pending == 4
+    assert process.queue_depth() == 4
     # drain
-    assert process._queue.get_nowait() == stuck.id
+    drained = []
+    while not process._queue.empty():
+        drained.append(process._queue.get_nowait())
+    process._queued_ids.clear()
+    assert drained == [stuck_fetched.id, stuck_fulltext.id, stuck_summarized.id, stuck_embedded.id]
 
 
 # --- vector store ---

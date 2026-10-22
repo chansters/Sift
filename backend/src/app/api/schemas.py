@@ -2,7 +2,9 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, TypeAdapter, field_validator
+
+from app.services import youtube
 
 # --- auth / users ---
 
@@ -29,8 +31,6 @@ class UserOut(BaseModel):
     story_order: str = ""
     # "" = follow the server default (unread)
     story_filter: str = ""
-    # Empty = process all categories; otherwise only these categories are in scope.
-    category_interests: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -51,8 +51,17 @@ class MePatch(BaseModel):
     password: str | None = Field(default=None, min_length=8)
     story_sort: str | None = Field(default=None, pattern="^(updated|published|sources)$")
     story_order: str | None = Field(default=None, pattern="^(asc|desc)$")
-    story_filter: str | None = Field(default=None, pattern="^(all|unread|updated)$")
+    story_filter: str | None = Field(default=None, pattern="^(all|unread|updated|saved)$")
     category_interests: list[str] | None = None
+
+
+class CategoryInterestsIn(BaseModel):
+    category_interests: list[str]
+
+
+class CategoryInterestsOut(BaseModel):
+    category_interests: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
 
 
 # --- admin user management ---
@@ -83,13 +92,24 @@ class ManagedUserOut(BaseModel):
 
 
 class FeedIn(BaseModel):
-    url: HttpUrl
+    # An RSS/Atom URL, or — resolved server-side to the channel's RSS URL — a YouTube channel
+    # URL (/@handle, /channel/UC…, /c/…, /user/…), a YouTube video URL, `@handle` or `UC…` id.
+    url: str
     title: str = ""
     poll_interval_min: int = Field(default=30, ge=5, le=1440)
     auth_cookies: str | None = None
     fetch_fulltext: bool = True
     # First-poll backfill window; omit to use the server default, 0 = everything
     backfill_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+    @field_validator("url")
+    @classmethod
+    def _valid_url(cls, v: str) -> str:
+        value = v.strip()
+        if youtube.is_channel_input(value):
+            return value
+        return str(TypeAdapter(HttpUrl).validate_python(value))
 
 
 class FeedPatch(BaseModel):
@@ -118,8 +138,42 @@ class FeedOut(BaseModel):
     # populated by GET /feeds only (per requesting user for unread) — 0 elsewhere
     story_count: int = 0
     unread_story_count: int = 0
+    # Mail feeds only: newsletter emails processed for this sender (0 for RSS)
+    email_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class FeedDiscoveryIn(BaseModel):
+    location: str = ""
+    themes: list[str] = Field(default_factory=list)
+    query: str = ""
+    mode: str = "smart"  # "catalog" | "smart"
+    locale: str | None = None
+    excluded_urls: list[str] = Field(default_factory=list)
+
+
+class DiscoveredSampleArticle(BaseModel):
+    title: str
+    url: str
+    published_at: str = ""
+
+
+class DiscoveredFeed(BaseModel):
+    title: str
+    url: str
+    site_url: str | None = None
+    description: str = ""
+    match_reason: str = ""
+    icon_url: str | None = None
+    access_level: str = "free_full"  # "free_full" | "free_excerpt" | "paywalled"
+    geographic_scope: str = "local"  # "local" | "regional" | "national" | "global"
+    sample_articles: list[DiscoveredSampleArticle] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)  # "directory" | "news" | "ai"
+
+
+class FeedDiscoveryOut(BaseModel):
+    feeds: list[DiscoveredFeed]
 
 
 # --- newsletter ingestion (per-user IMAP accounts) ---
@@ -162,6 +216,48 @@ class MailAccountOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- third-party reader ingestion (per-user reader accounts) ---
+
+
+class ReaderAccountIn(BaseModel):
+    provider: str = Field(default="greader", pattern="^greader$")
+    title: str = Field(default="", max_length=256)
+    api_base_url: str = Field(min_length=1, max_length=1024)
+    username: str = Field(default="", max_length=256)
+    password: str = Field(default="", max_length=512)
+    auth_token: str | None = None
+    initial_import_count: int = Field(default=200, ge=1, le=5000)
+    backfill_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+class ReaderAccountPatch(BaseModel):
+    title: str | None = Field(default=None, max_length=256)
+    api_base_url: str | None = Field(default=None, min_length=1, max_length=1024)
+    username: str | None = Field(default=None, max_length=256)
+    password: str | None = Field(default=None, max_length=512)
+    auth_token: str | None = None
+    is_enabled: bool | None = None
+    initial_import_count: int | None = Field(default=None, ge=1, le=5000)
+    backfill_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+class ReaderAccountOut(BaseModel):
+    id: int
+    provider: str
+    title: str
+    api_base_url: str
+    username: str
+    is_enabled: bool
+    initial_import_count: int
+    backfill_days: int | None
+    virtual_feed_id: int | None
+    last_checked_at: datetime | None
+    last_error: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # --- categories ---
 
 
@@ -174,6 +270,20 @@ class CategoryOut(BaseModel):
     name: str
 
     model_config = {"from_attributes": True}
+
+
+class CategorySuggestionOut(BaseModel):
+    normalized_text: str
+    label: str
+    article_count: int
+    first_seen: datetime
+    last_seen: datetime
+    example_titles: list[str]
+
+
+class CategorySuggestionAction(BaseModel):
+    normalized_text: str
+    label: str = ""  # only needed for /accept (creates a Category named `label`)
 
 
 # --- misc ---

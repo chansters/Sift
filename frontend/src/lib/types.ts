@@ -9,9 +9,7 @@ export interface User {
   story_sort: '' | 'updated' | 'published' | 'sources';
   story_order: '' | 'asc' | 'desc';
   // '' = follow the server default (unread)
-  story_filter: '' | 'all' | 'unread' | 'updated';
-  // Empty = process all categories.
-  category_interests: string[];
+  story_filter: '' | 'all' | 'unread' | 'updated' | 'saved';
 }
 
 export interface AuthUser extends User {
@@ -116,8 +114,8 @@ export interface LLMInteraction {
 export interface Feed {
   id: number;
   url: string;
-  // 'rss' or 'mail' (newsletter ingestion; never RSS-polled)
-  kind: 'rss' | 'mail';
+  // 'rss', 'mail' (newsletter ingestion; never RSS-polled), or 'reader_api'
+  kind: 'rss' | 'mail' | 'reader_api';
   sender_email: string | null;
   title: string;
   is_enabled: boolean;
@@ -130,6 +128,30 @@ export interface Feed {
   // populated by GET /feeds (unread is per requesting user) — 0 elsewhere
   story_count: number;
   unread_story_count: number;
+  // mail feeds only: newsletter emails processed for this sender (0 for RSS)
+  email_count: number;
+}
+
+export interface DiscoveredSampleArticle {
+  title: string;
+  url: string;
+  published_at?: string;
+}
+
+export interface DiscoveredFeed {
+  title: string;
+  url: string;
+  site_url: string | null;
+  description: string;
+  match_reason: string;
+  icon_url: string | null;
+  access_level: 'free_full' | 'free_excerpt' | 'paywalled';
+  geographic_scope: 'local' | 'regional' | 'national' | 'global';
+  sample_articles?: DiscoveredSampleArticle[];
+}
+
+export interface FeedDiscoveryResult {
+  feeds: DiscoveredFeed[];
 }
 
 /** Story-list feed filter option (GET /api/stories/feed-options) — a feed
@@ -137,9 +159,29 @@ export interface Feed {
 export interface FeedOption {
   id: number;
   title: string;
-  kind: 'rss' | 'mail';
+  kind: 'rss' | 'mail' | 'reader_api';
   url: string;
   sender_email: string | null;
+}
+
+/** Per-user third-party RSS reader API account (GET /api/reader-accounts).
+ * Password is write-only and never returned. */
+export interface ReaderAccount {
+  id: number;
+  user_id: number;
+  provider: 'greader';
+  title: string | null;
+  api_base_url: string;
+  username: string;
+  is_enabled: boolean;
+  /** Newest articles fetched per sync (10-500). */
+  initial_import_count: number;
+  /** Import window in days; null follows the server default, 0 imports everything. */
+  backfill_days: number | null;
+  virtual_feed_id: number | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+  created_at: string;
 }
 
 /** Per-user IMAP account for newsletter ingestion (GET /api/mail-accounts).
@@ -163,6 +205,15 @@ export interface Category {
   name: string;
 }
 
+export interface CategorySuggestion {
+  normalized_text: string;
+  label: string;
+  article_count: number;
+  first_seen: string;
+  last_seen: string;
+  example_titles: string[];
+}
+
 export interface StoryListItem {
   id: number;
   title: string;
@@ -177,7 +228,11 @@ export interface StoryListItem {
   last_updated_at: string;
   is_read: boolean;
   updated_since_read: boolean;
+  saved: boolean;
+  saved_at: string | null;
   readeck_bookmark_id: string | null;
+  video_id: string | null;
+  media_kind: 'video' | null;
 }
 
 /** Merge/move candidate from the proximity-ranked endpoints
@@ -218,9 +273,12 @@ export interface StoryArticle {
   content_status: string;
   content_warning: string | null;
   published_at: string | null;
+  origin_feed_title: string | null;
   feed_id: number;
   feed_title: string;
   feed_url: string;
+  video_id: string | null;
+  media_kind: 'video' | null;
 }
 
 export interface StoryRevision {

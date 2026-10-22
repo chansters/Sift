@@ -9,7 +9,7 @@ Only whitelisted keys are settable from the API.
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,9 +29,14 @@ OVERRIDABLE = {
     "llm_api_key": str,
     "embed_base_url": str,
     "embed_model": str,
+    "llm_context_tokens": int,
     "llm_trace_enabled": bool,
     "llm_trace_max_chars": int,
     "summary_language": str,
+    "summary_min_sentences": int,
+    "summary_max_sentences": int,
+    "headline_min_words": int,
+    "headline_max_words": int,
     "vector_backend": str,
     "qdrant_url": str,
     "qdrant_api_key": str,
@@ -44,17 +49,71 @@ OVERRIDABLE = {
     "poll_interval_max_minutes": int,
     "fulltext_min_chars": int,
     "feed_backfill_days": int,
+    "backlog_sweep_minutes": int,
+    "article_process_timeout_minutes": int,
     "mail_poll_minutes": int,
     "mail_max_messages_per_poll": int,
     "newsletter_llm_extract": bool,
     "newsletter_llm_clean": bool,
+    "reader_poll_minutes": int,
     "readeck_base_url": str,
     "readeck_token": str,
     "share_languages": str,
     "chat_enabled": bool,
     "chat_top_k": int,
     "chat_candidates": int,
+    "category_suggestions_enabled": bool,
+    "category_suggestion_min_articles": int,
+    "category_suggestion_window_days": int,
 }
+
+# key -> (min, max) allowed values
+_RANGES = {
+    "llm_context_tokens": (2048, 4_000_000),
+    "summary_min_sentences": (1, 12),
+    "summary_max_sentences": (1, 12),
+    "headline_min_words": (0, 40),
+    "headline_max_words": (1, 40),
+}
+# (min key, max key): min must not exceed max
+_PAIRS = [
+    ("summary_min_sentences", "summary_max_sentences"),
+    ("headline_min_words", "headline_max_words"),
+]
+
+_BOOLEAN = TypeAdapter(bool)
+_STARTUP_VALUES = {key: getattr(env_settings, key) for key in OVERRIDABLE}
+
+
+def _cast_setting(key: str, value: object) -> object:
+    cast = OVERRIDABLE[key]
+    # DB/environment values are strings: bool("False") would enable the option.
+    return _BOOLEAN.validate_python(value) if cast is bool else cast(value)
+
+
+def _validate_lengths(stored: dict[str, str], patch: dict[str, object]) -> str | None:
+    """Range + min<=max check on the effective values after applying the patch.
+    Returns an error message, or None when valid."""
+    effective: dict[str, int] = {}
+    for key in _RANGES:
+        raw: object
+        if key in patch:
+            raw = patch[key]
+            if raw is None or raw == "":
+                raw = _STARTUP_VALUES[key]  # reset to the default
+        else:
+            raw = _env_raw(key) or stored.get(key) or _STARTUP_VALUES[key]
+        try:
+            effective[key] = int(raw)  # type: ignore[call-overload]
+        except (TypeError, ValueError):
+            return f"Invalid value for {key}: {raw!r}"
+    for key, (low, high) in _RANGES.items():
+        if key in patch and not low <= effective[key] <= high:
+            return f"{key} must be between {low} and {high}"
+    for lo_key, hi_key in _PAIRS:
+        if effective[lo_key] > effective[hi_key]:
+            return f"{lo_key} must not exceed {hi_key}"
+    return None
 
 
 def _env_raw(key: str) -> str | None:
@@ -65,11 +124,10 @@ def _env_raw(key: str) -> str | None:
 
 def get_setting(stored: dict[str, str], key: str) -> object:
     """Effective value: env var wins, then DB override, then the code default."""
-    cast = OVERRIDABLE[key]
     raw = _env_raw(key) or stored.get(key)
     if raw is None:
         return getattr(env_settings, key)
-    return cast(raw)
+    return _cast_setting(key, raw)
 
 
 class SettingsOut(BaseModel):
@@ -99,6 +157,11 @@ async def get_settings(session: AsyncSession = Depends(get_session)) -> Settings
 async def patch_settings(
     body: SettingsPatch, session: AsyncSession = Depends(get_session)
 ) -> SettingsOut:
+    reset_keys = []
+    if any(k in _RANGES for k in body.values):
+        error = _validate_lengths(await _load_overrides(session), body.values)
+        if error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, error)
     for key, value in body.values.items():
         if key not in OVERRIDABLE:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown setting: {key}")
@@ -109,10 +172,10 @@ async def patch_settings(
             )
         if value is None or value == "":
             await session.execute(delete(Setting).where(Setting.key == key))
+            reset_keys.append(key)
             continue
-        cast = OVERRIDABLE[key]
         try:
-            cast(value)
+            _cast_setting(key, value)
         except (TypeError, ValueError):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, f"Invalid value for {key}: {value!r}"
@@ -123,6 +186,8 @@ async def patch_settings(
         else:
             row.value = str(value)
     await session.commit()
+    for key in reset_keys:
+        setattr(env_settings, key, _STARTUP_VALUES[key])
     _apply_overrides(await _load_overrides(session))
     return await get_settings(session)
 
@@ -230,12 +295,11 @@ def _apply_overrides(stored: dict[str, str]) -> None:
     for key in OVERRIDABLE:
         if _env_raw(key) is not None:
             continue  # env wins — never let a DB row shadow the launch environment
-        cast = OVERRIDABLE[key]
         raw = stored.get(key)
         if raw is None:
             continue
         try:
-            setattr(env_settings, key, cast(raw))
+            setattr(env_settings, key, _cast_setting(key, raw))
         except (TypeError, ValueError):
             continue
 

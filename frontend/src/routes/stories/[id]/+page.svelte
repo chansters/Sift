@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { api, faviconUrl } from '$lib/api';
+  import { api, faviconUrl, imageSrc } from '$lib/api';
   import ReadeckIcon from '$lib/components/ReadeckIcon.svelte';
   import ShareButton from '$lib/components/ShareButton.svelte';
+  import YouTubePlayer from '$lib/components/YouTubePlayer.svelte';
   import StoryPicker from '$lib/components/StoryPicker.svelte';
   import type { SimilarStory, StoryDetail } from '$lib/types';
 
@@ -39,6 +40,14 @@
     if (story.is_read) await api.stories.unread(id);
     else await api.stories.read(id);
     await load();
+  }
+
+  async function toggleSaved() {
+    if (!story) return;
+    const next = !story.saved;
+    const saved = await api.stories.setSaved(id, next);
+    story.saved = saved.saved;
+    story.saved_at = saved.saved_at;
   }
 
   async function merge() {
@@ -123,6 +132,16 @@
   <div class="row">
     <a href="/">← back</a>
     <span class="spacer"></span>
+    <button
+      class="savebtn"
+      class:active={story.saved}
+      onclick={toggleSaved}
+      aria-label={story.saved ? 'Remove saved story' : 'Save story'}
+      title={story.saved ? 'Saved story — click to remove' : 'Save story'}
+    >
+      <span class="star" aria-hidden="true">★</span>
+      {story.saved ? 'Saved' : 'Save'}
+    </button>
     {#if readeckEnabled}
       {@const saved = Boolean(story.readeck_bookmark_id)}
       <button
@@ -145,13 +164,21 @@
     <div class="row">
       <span class="chip">{story.category}</span>
       {#if story.updated_since_read}<span class="badge updated">UPDATED since you read it</span>{/if}
+      {#if story.media_kind === 'video'}<span class="badge video">▶ YouTube</span>{/if}
       {#if story.is_frozen}<span class="badge frozen">archived</span>{/if}
     </div>
     <h1>{story.title}</h1>
-    {#if story.image_url}
-      <img class="lead" src={story.image_url} alt="" loading="lazy" />
+    {#if story.video_id}
+      <div class="videowrap"><YouTubePlayer videoId={story.video_id} title={story.title} /></div>
+    {:else if story.image_url}
+      <img class="lead" src={imageSrc(story.image_url)} alt="" loading="lazy" />
     {/if}
-    <p class="summary">{story.summary}</p>
+    {#if story.summary}
+      <details class="summary-details">
+        <summary>Summary</summary>
+        <p class="summary">{story.summary}</p>
+      </details>
+    {/if}
     <div class="meta">
       <span>first seen {fmt(story.first_seen_at)}</span>
       <span>updated {fmt(story.last_updated_at)}</span>
@@ -177,7 +204,9 @@
       <div class="source">
         <div class="row">
           <img class="favicon" src={favicon(article.url)} alt="" loading="lazy" onerror={hideFav} />
-          <span class="srcname">{article.feed_title || 'Unknown source'}</span>
+          <span class="srcname" title={article.origin_feed_title && article.feed_title ? `via ${article.feed_title}` : ''}>
+            {article.origin_feed_title || article.feed_title || 'Unknown source'}
+          </span>
           {#if article.published_at}<span class="age">{fmt(article.published_at)}</span>{/if}
           <span class="lang">{article.language || '?'}</span>
           {#if article.content_status === 'partial'}
@@ -224,16 +253,41 @@
 {/if}
 
 <style>
+  .videowrap { margin: 0.6rem 0; }
   .row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .spacer { flex: 1; }
   .iconbtn { display: inline-flex; align-items: center; gap: 0.35rem; }
   .iconbtn.saved { color: var(--disabled-text); border-color: var(--disabled-bg); opacity: 0.75; }
+  .savebtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .savebtn.active {
+    color: var(--accent-signal);
+    border-color: var(--accent-signal);
+  }
+  .savebtn .star {
+    font-size: 1rem;
+    line-height: 1;
+  }
   h1 { font-size: 1.5rem; margin: 0.5rem 0; overflow-wrap: anywhere; }
   h2 { font-size: 1.05rem; margin-top: 0; }
   .lead {
     width: 100%; max-height: 320px; object-fit: cover;
     border-radius: 8px; margin-bottom: 0.5rem;
   }
+  .summary-details { margin: 0.5rem 0; }
+  .summary-details summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-secondary);
+    user-select: none;
+  }
+  .summary-details summary:hover {
+    color: var(--accent);
+  }
+  .summary-details p.summary { margin-top: 0.5rem; }
   .summary { font-size: 1.05rem; overflow-wrap: anywhere; }
   .meta { display: flex; gap: 0.4rem 1rem; color: var(--muted); font-size: 0.85em; flex-wrap: wrap; }
   .chip {

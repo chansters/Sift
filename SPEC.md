@@ -77,6 +77,8 @@ Non-goals (v1): non-RSS sources (kept pluggable), mobile app, localized GUI, not
 ```mermaid
 erDiagram
     USER ||--o{ STORY_STATE : "has per-story state"
+    USER ||--o{ USER_FEED : "subscribes"
+    FEED ||--o{ USER_FEED : "has subscriber"
     FEED ||--o{ ARTICLE : produces
     STORY ||--o{ ARTICLE : groups
     STORY ||--o{ STORY_REVISION : "history"
@@ -90,14 +92,21 @@ erDiagram
         datetime created_at
     }
 
+    USER_FEED {
+        int user_id PK, FK
+        int feed_id PK, FK
+        datetime created_at
+    }
+
     FEED {
         int id PK
-        string url           "RSS URL, or pseudo-URL newsletter:{sender} for mail feeds"
-        string kind          "rss|mail — mail feeds are never RSS-polled"
+        string url           "RSS URL, pseudo-URL newsletter:{sender} for mail feeds, or reader:{provider}:{account_id} for reader_api feeds"
+        string kind          "rss|mail|reader_api|saved — only rss feeds are polled; saved = per-user pseudo-feed (url saved:{user_id}) holding links shared from other apps"
         string sender_email  "mail feeds only: the newsletter From: address"
         string title
         int poll_interval_min
         int backfill_days   "first-poll window; NULL = server default, 0 = all"
+        int email_count     "mail feeds only: newsletter emails processed"
         datetime last_fetched_at
         string etag
         string last_modified
@@ -121,6 +130,8 @@ erDiagram
         text   newsletter_intro "mail feeds only: human-written intro from the email;
                                preferred over the LLM summary when a NEW story is
                                created from this article"
+        string origin_feed_title "reader_api feeds only: original subscription/feed title
+                               from the third-party reader (e.g. 'Ars Technica')"
         string category
         blob   embedding     "float32 (sqlite-vec) or external id (Qdrant)"
         int    story_id FK   "nullable until clustered"
@@ -133,9 +144,10 @@ erDiagram
 
     STORY {
         int id PK
-        string title          "LLM-generated headline, in SUMMARY_LANGUAGE"
-        text   summary        "merged summary, in SUMMARY_LANGUAGE"
+        string title          "LLM-generated headline, in canonical source language"
+        text   summary        "merged summary, in canonical source language"
         string category
+        string language       "canonical ISO language code of the story"
         string image_url      "lead image: first member article with an image
                                (RSS media / inline <img>, else og:image from the page)"
         blob   centroid       "recency-weighted mean of member embeddings"
@@ -156,6 +168,15 @@ erDiagram
     STORY_REVISION {
         int story_id FK
         int version
+        text summary
+        datetime created_at
+    }
+
+    STORY_TRANSLATION {
+        int story_id PK,FK
+        string language PK    "ISO 639-1 target code, e.g. de, fr, es"
+        int version           "matches story.version when up-to-date"
+        string title
         text summary
         datetime created_at
     }
@@ -193,11 +214,31 @@ erDiagram
         string last_error
         datetime created_at
     }
+
+    READER_ACCOUNT {
+        int id PK
+        int user_id FK        "per-user reader account (§9 third-party reader ingestion)"
+        string provider       "greader (Google Reader API compatible: Inoreader, FreshRSS, Miniflux, The Old Reader, BazQux)"
+        string api_base_url   "endpoint base URL (e.g. https://www.inoreader.com/reader or self-hosted)"
+        string username       "API username/login or client ID"
+        string password       "write-only via the API; password / token / secret"
+        string auth_token     "cached session/auth token (e.g. Google Reader Auth=...)"
+        bool   is_enabled
+        int    virtual_feed_id "FK to feed.id: single aggregated virtual feed for this account"
+        string sync_cursor    "continuation / watermark token for polling"
+        datetime last_checked_at
+        string last_error
+        datetime created_at
+    }
 ```
 
 `LLM_USAGE` is append-only and **never purged by retention** — one row per external
 LLM call, full history is the point (cloud-readiness metrics). Cost estimation is a
 GUI-side playground (prices entered on the Usage page, never a server setting).
+
+### Saved flag
+
+`story_state.saved_at: datetime | None` (per user). Saved never changes `read_at_version` and never counts toward unread. Retention (`RETENTION_DAYS`) skips any story with at least one `story_state.saved_at IS NOT NULL`, along with its articles/revisions/vectors. Wording is **saved** everywhere (API, DB, UI); the Readeck `bookmark` is a separate, optional export.
 
 ### Key derived flag
 
@@ -328,21 +369,32 @@ v1 is **data-first, no online learning**:
 | `POST /auth/session-token` | issue a fresh portable token for the authenticated user — for flows that can't use cookies/headers (RSS readers on `/feed.xml`); works even when the client lost its localStorage token mid-session (valid cookie suffices) |
 | `GET/PATCH /me` | profile + per-user preferences: summary language, story-list filter (`story_filter`, default `unread`) and ordering (`story_sort`/`story_order`) — shared across the user's devices |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | user management (admin): list, create (username/password/admin flag), reset password or toggle admin, delete. First-run `/auth/setup` only creates the initial admin; additional users come from here. Guards: the last admin can be neither demoted nor deleted, and a user cannot delete themselves; deleting a user bulk-removes their `STORY_STATE` rows |
-| `GET /stories?filter=all\|unread\|updated&category=&feed=&sort=updated\|published\|sources&order=asc\|desc` | story list with **per-user** flags; `feed` keeps only stories with at least one source article from that feed; sort by article publication date (default), last update, or source count, ascending (default: oldest first) or descending; unknown dates always last |
-| `GET /stories/feed-options` | feeds that have at least one article in a story (`[{id, title, kind, url, sender_email}]`) — options for the story-list feed filter. Any authenticated user (feeds CRUD itself is admin-only) |
-| `GET /stories/{id}` | story detail: merged summary + source articles + revision history |
-| `POST /stories/{id}/read` | sets `read_at_version = story.version` (per user) |
-| `POST /stories/{id}/unread` | |
+| `GET /stories?filter=all\|unread\|updated&category=&feed=&sort=updated\|published\|sources&order=asc\|desc&since=<ISO datetime>` | story list scoped to the requesting user's subscribed feeds with **per-user** flags; `feed` keeps only stories with at least one source article from that feed; sort by article publication date (default), last update, or source count, ascending (default: oldest first) or descending; undated stories sort by last update; `since` keeps only stories with source articles published (else fetched) at or after that instant, and with `sort=sources` ranks by that recent source count; optional `limit`/`offset` slice the result after filtering and sorting (omitted = full list) and per-story hosts/translations are only computed for the returned slice |
+| `GET /stories/widget-snapshot?since=<ISO datetime>&limit=12` | one lightweight call for the Apple widgets: `unread_count` plus `lists` (`latest`, `latest_unread`, `oldest`, `oldest_unread`, `most_sources`, `most_sources_unread`), each up to `limit` story items; `most_sources*` rank by sources published since `since` |
+| `GET /stories/counts?category=&feed=` | filter-pill counts `{all, unread, updated, saved}` for the user's visible stories (optional category/feed scope) — lets the GUI avoid fetching the full list just to count |
+| `GET /stories/feed-options` | feeds subscribed by the current user that have at least one article in a story (`[{id, title, kind, url, sender_email}]`) — options for the story-list feed filter |
+| `GET /stories/{id}` | story detail: merged summary + source articles + revision history (404 if user is not subscribed to any member feeds) |
+| `POST /stories/import-url` | body `{url}` (http/https only, else 422): turns a link shared from another app into an article of the caller's "Shared with NewsGator" feed (`kind = 'saved'`, pseudo-URL `saved:{user_id}`, never polled, created on first use and subscribed to automatically) and enqueues it in the normal pipeline. Returns `201 {article_id, feed_id, already_known, story_id}`; a URL (tracking params stripped) already present in the user's feeds is not duplicated (`already_known: true`) |
+| `POST /stories/{id}/read` | sets `read_at_version = story.version` (per user) and pushes read state to connected third-party reader APIs for any member articles from reader feeds |
+| `POST /stories/{id}/unread` | marks story unread and pushes unread state to connected third-party reader APIs for any member articles from reader feeds |
 | `GET /stories/{id}/diff?from={version}` | what changed |
-| `CRUD /feeds` | feed management (admin); `GET /feeds` also reports `story_count` / `unread_story_count` per feed (stories with a source from it; unread is per the requesting user). **Creating a feed kicks an immediate background poll** (no waiting for the next scheduler tick) |
-| `POST /feeds/import-opml` | bulk-import feeds from an OPML subscription export (admin); added feeds are polled immediately in the background |
-| `POST /feeds/{id}/refresh`, `POST /feeds/refresh` | force-poll one/all RSS feeds now, bypassing the adaptive schedule (admin); mail feeds are rejected — they are refreshed by polling the mail account |
+| `CRUD /feeds` | feed management (any authenticated user); `GET /feeds` reports feeds subscribed by the user with `story_count` / `unread_story_count` per feed (unread is per the requesting user) and `email_count` (mail feeds only). Adding an existing feed subscribes the user to it; adding a new feed registers it globally and **kicks an immediate background poll**. Deleting unsubscribes the user, and cascades deletion of the feed and orphaned articles only if no other subscribers remain |
+| `POST /feeds/import-subscriptions` | multipart `file`: a Google Takeout YouTube `subscriptions.csv` (BOM/CRLF/quoted titles tolerated) or an OPML file, auto-detected → `201 {added, skipped, invalid, feeds[]}`; rows become `https://www.youtube.com/feeds/videos.xml?channel_id=UC…` feeds, polled in the background; `400` if neither format |
+| `POST /feeds/import-opml` | bulk-import feeds into the user's subscriptions from an OPML file; new feeds are polled immediately in the background |
+| `GET /feeds/export-opml` | export the user's subscribed RSS-kind feeds as an OPML 2.0 subscription list; mail feeds are excluded |
+| `POST /feeds/{id}/refresh`, `POST /feeds/refresh` | force-poll one/all of the user's subscribed RSS feeds now, bypassing the adaptive schedule; mail feeds are rejected |
+| `POST /feeds/probe` | body `{url}`: finds the RSS/Atom feed advertised by the site of a web page (`<link rel="alternate">`, common feed paths) using the discovery prober. Returns `{feed, already_followed, feeds: [{title, url, site_url, …, already_followed}]}` (`feeds` lists the feeds the page or its site declares, then up to 20 in all of the site's other feeds from Feedsearch (sections of the article's path first); `feed` is the first one, `null` when none) so clients can offer "subscribe to this feed" on stories created from shared links |
+| `POST /feeds/discover` | Feed discovery, aligned with the Apple standalone pipeline. Body: `themes` (13 category names) **or** free-text `query` (exclusive; categories win), `mode` (`catalog` \| `smart`), `locale` (`fr_FR`: language filters results, country selects the news edition), `excluded_urls`. Leads come from the directory's curated topic lists (keyword search only as fallback), Google News publisher mentions (**only as a fallback**, when the directory yields fewer than 10 usable leads), and in `smart` mode LLM-suggested publications; each is verified live (parses, ≤180 days old, language match; the LLM topic check applies only to `smart`-mode suggestions). Feeds the user already follows and duplicates (normalized URL) are never returned. Each result carries `sources` (`directory`/`news`/`ai`) |
+| `POST /feeds/discover/stream` | Same body and search as `/feeds/discover`, streamed as `application/x-ndjson`: `stage`, `progress` (`current`, `total`, `target`), `feed` (provisional arrival order), then `done` (`feeds`, the final ranking) or `error`; `ping` lines keep the connection alive. The search is time-bounded by `DISCOVERY_BUDGET_S`. | admin/user |
 | `GET/POST /mail-accounts`, `PATCH/DELETE /mail-accounts/{id}` | per-user IMAP accounts for newsletter ingestion (any user, own accounts only — 404 across users). Folder is mandatory; the password is write-only (never returned, replace via PATCH). Deleting an account keeps the mail feeds/articles it produced |
 | `POST /mail-accounts/{id}/test`, `POST /mail-accounts/{id}/poll` | probe IMAP login + folder existence (returns ok/errors, never the password), or poll the account immediately (202 + message count; **409 when a poll is already running** for that account) |
-| `GET/PATCH /settings` | global: retention days, freeze window, thresholds, vector backend (admin). Precedence: **env var > DB override > code default**; env-set keys are reported in `env_locked`, shown read-only in the GUI, and rejected by PATCH |
+| `GET/POST /reader-accounts`, `PATCH/DELETE /reader-accounts/{id}` | per-user third-party RSS reader API accounts (Google Reader API compatible: Inoreader, FreshRSS, Miniflux, The Old Reader, BazQux; own accounts only). All articles from an account are grouped into one virtual feed. Password/token is write-only (never returned) |
+| `POST /reader-accounts/{id}/test`, `POST /reader-accounts/{id}/poll` | probe reader API authentication + stream access, or poll the account immediately (202 + article count; 409 if poll currently in progress) |
+| `GET/PATCH /settings` | global: retention days, freeze window, thresholds, vector backend, story summary/headline length (`summary_min_sentences`/`summary_max_sentences` 1–12, default 3/5; `headline_min_words` 0–40 where 0 = no minimum, `headline_max_words` 1–40, default 0/12; min ≤ max, else 400) (admin). Precedence: **env var > DB override > code default**; env-set keys are reported in `env_locked`, shown read-only in the GUI, and rejected by PATCH |
 | `POST /settings/test-llm`, `POST /settings/test-qdrant`, `POST /settings/test-readeck` | connection probes for the external services (admin); return `ok` + errors without leaking secrets |
 | `POST /stories/{id}/merge` / `POST /articles/{id}/move` | manual override when clustering is wrong (important for trust) |
 | `GET /stories/{id}/similar`, `GET /stories/articles/{id}/similar-stories` | ranked merge/move candidates for the story-detail pickers: ANN over story centroids then exact cosine re-rank, `[{id, title, similarity}]` best-first, self/current story excluded; stories/articles without vectors fall back to unscored recency order (`similarity: null`). Read-only probes — no activity events |
+| `PUT /stories/{id}/saved`, `DELETE /stories/{id}/saved` | set / clear the per-user **saved** flag (idempotent, returns `{saved, saved_at}`). Stored on `story_state.saved_at` (NULL = not saved; migration `0019`). Saved is orthogonal to read/updated and independent of Readeck. `GET /stories` accepts `saved=true` (only saved) and every story item/detail carries `saved: bool` + `saved_at`. Saved stories (and their member articles, revisions and vectors) are **exempt from retention purging and cluster aging deletion** for every user who saved them. Requires a story the user can see (404 otherwise) |
 | `POST /stories/{id}/readeck` | push the story to Readeck as a permanent, self-contained bookmark (headline + summary + all source links as uploaded HTML; canonical `url` = primary source article). 404 when Readeck isn't configured; 502 on upstream failure. On success the bookmark UID is stored on `story.readeck_bookmark_id` (surfaced in list + detail so the GUI can grey out the button). Optional — enabled only when both `READECK_BASE_URL` and `READECK_TOKEN` are set (env or settings override) |
 | `GET /stories/share-languages` | languages offered by the share picker (from `SHARE_LANGUAGES`, ISO codes filtered to known names) + the current summary language |
 | `POST /stories/{id}/share` | build the share card (headline + merged summary + all source links; `url` = primary source article) for the client-side Web Share API / clipboard. Body `{language}` = ISO code for on-demand LLM translation of headline + summary; null/omitted = share as-is (no LLM call). Always available — nothing to configure. 400 on unsupported language or incomplete translation, 502 on LLM failure |
@@ -352,6 +404,9 @@ v1 is **data-first, no online learning**:
 | `GET /usage/summary?period=day\|month\|all`, `GET /usage/daily?days=`, `GET /usage/by-feed` | LLM token-usage metrics (admin): totals + per-kind/per-model breakdowns with throughput (tok/s), per-day series, per-source-feed history. Token counts flagged `estimated` when the server omitted `usage` |
 | `GET /favicon?host=` | cached favicon proxy for source logos and feed icons (auth required; never a third-party favicon service — cache TTL via `FAVICON_CACHE_HOURS`). Fetch chain: `/favicon.ico`, then the homepage's `<link rel=icon>`, then parent domains (newsletter senders are often subdomains like `mail.example.com` with no icon of their own; never strips below two labels) |
 | `GET /feed.xml?category=&unread=1&limit=` | the story archive as an RSS 2.0 feed — each item is one story (headline, merged summary, lead image as `media:content`, primary source article as link). guid is the stable `story:{id}`; `pubDate` is the original article publication date and `atom:updated` tracks the latest revision date, so a version bump marks the item updated without re-notifying it. Auth via `?token=` (RSS readers can't set headers) |
+| `CRUD /categories` | taxonomy management (admin): list/create/rename/delete; deleting `Uncategorized` is rejected |
+| `GET /categories/suggestions` | recurring LLM-proposed categories not yet in the taxonomy (admin) — `[{normalized_text, label, article_count, first_seen, last_seen, example_titles}]`, most-suggested first |
+| `POST /categories/suggestions/accept`, `POST /categories/suggestions/dismiss` | add a proposal's label as a real category (clears its suggestion log) or suppress it from future listings (admin) |
 
 Manual merge/split is a deliberate feature: clustering *will* be wrong sometimes, and the
 user must be able to fix it. Corrections can later feed threshold tuning.
@@ -390,6 +445,13 @@ user must be able to fix it. Corrections can later feed threshold tuning.
   the same usage would cost on a cloud provider. A warning banner shows the share of
   calls whose token counts were estimated (server returned no `usage` object).
 - Filters: category, unread / updated-since-read, language of sources.
+- **Design system & theme centralization**: styled according to the "Editorial Gator"
+  concept with all tokens centralized in `src/lib/theme.css` (primary brand Forest green
+  `#146B3A`, Forest 900 `#0B3D2A`, warm Paper `#F8F7F1` with dark forest night palette
+  for dark mode, Leaf green `#49A85A`, and Gator Gold `#F2B827` freshness/unread signal dot).
+  Cards use 19px corner radii with subtle line borders; filters render as soft segmented
+  pills. All component styling routes through semantic tokens so future redesigns require
+  only CSS token changes. Existing logo assets are permanent invariants.
 
 ---
 
@@ -442,6 +504,22 @@ LLM", …) in near real time.
   target language injected ("Summarize the following article in French…").
 - Calls needed: `chat.completions` (summarize, headline, novelty check, pairwise confirm,
   category) and `embeddings`.
+- **Context budget**: `LLM_CONTEXT_TOKENS` (default 32768, setting `llm_context_tokens`, 2048–4 000 000)
+  is the model's usable window. Article text is never truncated: when `(window − 2000 reserved
+  output − fixed prompt tokens) × 3 chars` is exceeded, `services/condense.py` summarises
+  paragraph-aligned chunks map-reduce style (≤16 LLM calls per article incl. the final one; last
+  resort: even sampling across the text). Events `condense_start|done|error`; usage kind
+  `condense`. Mail clean/extract, chat RAG context and story translation are budgeted too.
+- **YouTube** (`services/youtube.py`, the only module that knows YouTube): channels are plain RSS
+  feeds (`/feeds/videos.xml?channel_id=UC…`, no new feed kind). Fulltext for a video URL = the
+  caption transcript in paragraphs (original-language track, manual before auto), fetched via
+  the innertube ANDROID player (fallback: `youtube-transcript-api`). Shorts (≤60 s or
+  `/shorts/<id>` 200) are dropped (`processing_state=clustered`, `content_status=skipped`);
+  live/upcoming stay `fetched` for the sweep; no captions → description (`partial`); unplayable →
+  RSS content (`partial`). Story/article DTOs carry optional `video_id` / `media_kind="video"`.
+  `POST /feeds` and `/feeds/probe` accept channel URLs, `@handle`, `UC…` ids and video URLs
+  (resolved to the RSS URL; `422` if unresolvable). Shared YouTube links are canonicalised to
+  `watch?v=<id>` and get title/channel/thumbnail from oEmbed (non-fatal on failure).
 - All prompts request **structured JSON output**; validate + retry once on parse failure.
 - Every LLM call is idempotent-ish and stored (article.summary, story.summary), so
   pipeline steps are resumable after failure — store per-article `processing_state`
@@ -454,6 +532,17 @@ LLM", …) in near real time.
   add/rename/remove categories in the GUI; the constrained-choice LLM prompt is built
   from the *current* taxonomy at call time. Renaming a category relabels existing items
   (cheap); deleting moves items to `Uncategorized`.
+- **Category suggestions** (`services/category_suggestions.py`): the same summarize
+  call may return an optional `suggested_category` when none of the taxonomy fits
+  well (prompted to only do so for a genuinely uncovered recurring topic, not a loose
+  fit). Suggestions are logged per-article (`CATEGORY_SUGGESTION` table, no FK — same
+  append-only pattern as `LLM_USAGE`/`CHAT_MESSAGE`), **never auto-applied**. An admin
+  sees recurring proposals (grouped by lowercased/punctuation-stripped text — exact-ish
+  dedupe, not semantic — across `>= CATEGORY_SUGGESTION_MIN_ARTICLES` distinct articles
+  within `CATEGORY_SUGGESTION_WINDOW_DAYS`) on the Settings page next to the taxonomy
+  editor, and can accept (adds the category, clears the log for that cluster) or
+  dismiss (suppresses it going forward via `CATEGORY_PROPOSAL_DISMISSAL`). Toggle via
+  `CATEGORY_SUGGESTIONS_ENABLED`.
 - **Changing `SUMMARY_LANGUAGE` after data exists** requires re-summarizing and
   re-embedding everything (embeddings are in the summary language's vector space).
   Warn the user and run it as a background reprocessing job.
@@ -504,7 +593,9 @@ hardware budget:
   patterns typical of metered paywalls.
 - Polite crawling: per-domain rate limiting, `robots.txt` respected, conditional GETs;
   archive.is lookups are rate-limited too and failures are cached (don't re-probe the
-  same URL for 24h).
+  same URL for 24h). archive.is rejects non-browser agents (429), so archive lookups (and
+  only those) send a Safari User-Agent; the snapshot is reduced to its `#CONTENT` wrapper
+  (archive.is header/share/toolbar stripped) before extraction and paywall checks.
 - **Retention job** (nightly): purge stories/articles older than `RETENTION_DAYS`
   (default 45, GUI-configurable); cascades to revisions, read states, and vectors.
 - **First-poll backfill window**: on a feed's very first poll, skip entries older
@@ -584,6 +675,45 @@ the scheduler polls every enabled account every `MAIL_POLL_MINUTES` (default 15)
   extraction LLM calls are recorded as usage kinds `newsletter_clean` /
   `newsletter_extract`.
 
+### Third-party RSS Reader API ingestion (Google Reader API compatible)
+
+Users can connect third-party RSS reader services (e.g. Inoreader, FreshRSS, Miniflux,
+The Old Reader, BazQux) using the standard Google Reader API (`/reader/api/0`).
+Accounts are configured per-user (`READER_ACCOUNT`, own accounts only — 404 across
+users), and the scheduler polls enabled accounts every `READER_POLL_MINUTES` (default 15).
+
+- **Virtual Feed Aggregation**: All articles originating from a connected reader account
+  are associated with **one single virtual feed** (`FEED` with `kind = 'reader_api'`,
+  title e.g. "Inoreader" or custom account title, pseudo-URL `reader:{provider}:{account_id}`).
+  Sub-feeds within the third-party reader do NOT appear as individual feeds in NewsGator.
+- **Canonical Publisher Links**: Entry links are resolved to the **original publisher URL**
+  (from `canonical[0].href` or `alternate[0].href`, stripped of tracking parameters via
+  `canonicalize_url()`). Third-party redirect/tracking URLs are never stored as article URLs.
+- **Publisher Favicons**: Favicons in story cards and detail rows derive automatically
+  from the canonical `article.url` host (using the cached `/api/favicon?host=` proxy),
+  faithfully showing the original publisher's icon rather than the reader service's icon.
+- **Origin Feed Title**: The original subscription title reported by the reader API (e.g.
+  `origin.title = "Ars Technica"`) is preserved on `article.origin_feed_title`, allowing
+  story detail views to show the true publication name alongside the publisher favicon.
+- **Individual Article Pipeline**: Each imported entry undergoes the complete standard
+  pipeline (full-text extraction via trafilatura/readability → LLM summarization →
+  embedding → clustering into stories).
+- **Bidirectional Read-State Synchronization**:
+  - **Outbound**: When a story is marked as read in NewsGator (`POST /api/stories/{id}/read`),
+    all member articles originating from connected reader accounts have their read state
+    pushed upstream via the Google Reader API (`POST /reader/api/0/edit-tag` with
+    `a=user/-/state/com.google/read&i={item_id}`). Marking unread pushes `r=user/-/state/com.google/read`.
+  - **Inbound**: During account poll, read states of existing articles are inspected.
+    If an article was read on the remote service:
+    - If the story contains only that single article: the story is marked read
+      (`is_read = True`, `read_at_version = story.version`).
+    - If the story has multiple member articles and an article was read externally:
+      the story is marked as **"Updated"** (`is_read = True`, `read_at_version = story.version - 1`),
+      signifying that part of the story was read while other complementary coverage remains.
+- **Activity events** (component `reader`): `reader_poll_start/done/failed`,
+  `reader_read_pushed`, `reader_account_created/deleted`.
+
+
 ---
 
 ## 10. Scale assumptions (v1)
@@ -615,8 +745,9 @@ Everything above is normative; this section is just a quick-reference recap.
 - **Categories**: seeded taxonomy, fully admin-customizable in the GUI.
 - **Feeds**: adaptive polling, conditional GETs, exponential backoff on errors,
   auto-disable after 7 consecutive days of failure (configurable), manual re-enable.
-  Two kinds: `rss` (HTTP-polled) and `mail` (newsletter ingestion from per-user
-  IMAP folders — senders become feeds, links become articles, §9).
+  Three kinds: `rss` (HTTP-polled), `mail` (newsletter ingestion from per-user
+  IMAP folders — senders become feeds, links become articles, §9) and `saved`
+  (links the user shares from other apps; never polled).
 - **Newsletters**: per-user IMAP accounts with a mandatory folder, read-only
   UID-watermark polling, code-first link extraction + one LLM refinement call per
   message; human-written intros preferred over LLM summaries for new stories.

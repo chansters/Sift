@@ -14,31 +14,76 @@ LANGUAGE_NAMES = {
     "it": "Italian",
     "pt": "Portuguese",
     "nl": "Dutch",
+    "ru": "Russian",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ar": "Arabic",
+    "ko": "Korean",
+    "pl": "Polish",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "no": "Norwegian",
 }
 
 
-def summary_language_name() -> str:
-    return LANGUAGE_NAMES.get(settings.summary_language, settings.summary_language)
+def summary_language_name(lang_code: str | None = None) -> str:
+    code = lang_code or settings.summary_language
+    return LANGUAGE_NAMES.get(code, code)
 
 
-def summarize_article(title: str, text: str, taxonomy: list[str]) -> tuple[str, str]:
-    """Per-article summary + category. Returns (system, user)."""
-    lang = summary_language_name()
+MEDIA_KIND_VIDEO = "video"
+
+# Applied only when the source is a video (media_kind == "video"): the text is an automatic
+# spoken transcript, so the summary/headline must not echo the (often clickbait) video title.
+VIDEO_GUIDANCE = (
+    "The source is an automatic spoken transcript of a video, possibly noisy, in the "
+    "speaker's language. Ignore greetings, sponsor reads, subscribe/like requests and "
+    "channel promotion. Write a neutral, factual summary of what is actually said. Do not "
+    "reuse or imitate the original video title; no clickbait, no questions."
+)
+VIDEO_HEADLINE_GUIDANCE = (
+    "These summaries come from a video transcript. Write a neutral, factual headline of "
+    "what is actually said; do not reuse or imitate the original video title; no clickbait "
+    "and no questions."
+)
+
+
+def summarize_article(
+    title: str,
+    text: str,
+    taxonomy: list[str],
+    lang_code: str | None = None,
+    media_kind: str | None = None,
+) -> tuple[str, str]:
+    """Per-article summary + category. Returns (system, user).
+
+    The text is sent whole: the caller (process.summarize_article) condenses anything that
+    does not fit the model context (services/llm_budget.py) before calling this.
+    """
+    lang = summary_language_name(lang_code)
+    guidance = f"\n{VIDEO_GUIDANCE}\n" if media_kind == MEDIA_KIND_VIDEO else ""
     categories = ", ".join(taxonomy)
     system = (
         f"You are a news summarizer for a personal news reader. Always write in {lang}. "
         "Reply with ONLY a valid JSON object."
     )
     user = f"""Summarize the following news article in {lang} (2-4 sentences, factual, no opinion).
-
+{guidance}
 Also assign exactly one category from this list: {categories}
 
-Reply with JSON: {{"summary": "...", "category": "..."}}
+If — and only if — none of the listed categories fit this article well, also
+propose a short new category name (2-3 words, in {lang}) in "suggested_category".
+Otherwise set "suggested_category" to null. Do not propose a new category just
+because a listed one is a loose fit; only when the article is clearly about a
+recurring topic none of them cover.
+
+Reply with JSON: {{"summary": "...", "category": "...", "suggested_category": "... or null"}}
 
 Article title: {title}
 
 Article text:
-{text[:8000]}"""
+{text}"""
     return system, user
 
 
@@ -61,19 +106,47 @@ Headline: {title}"""
     return system, user
 
 
-def story_headline(article_summaries: list[str]) -> tuple[str, str]:
+def _headline_words() -> str:
+    low, high = settings.headline_min_words, settings.headline_max_words
+    return f"{low}-{high} words" if low > 0 else f"max {high} words"
+
+
+def _summary_sentences() -> str:
+    return f"{settings.summary_min_sentences}-{settings.summary_max_sentences} sentences"
+
+
+def condense_chunk(text: str, max_words: int) -> tuple[str, str]:
+    """Map step of the long-text map-reduce: extract the facts of one chunk."""
+    system = (
+        "You extract facts from a part of a longer text for a personal news reader. "
+        "Reply with ONLY a valid JSON object."
+    )
+    user = f"""Extract every fact, name, figure and claim from the text below, keeping their
+order. No opinion, no commentary, no introduction. Write in the same language as the text,
+in at most {max_words} words.
+
+Reply with JSON: {{"digest": "..."}}
+
+Text:
+{text}"""
+    return system, user
+
+
+def story_headline(
+    article_summaries: list[str], lang_code: str | None = None, media_kind: str | None = None
+) -> tuple[str, str]:
     """Generate a short story headline from member article summaries."""
-    lang = summary_language_name()
+    lang = summary_language_name(lang_code)
+    guidance = f"\n{VIDEO_HEADLINE_GUIDANCE}\n" if media_kind == MEDIA_KIND_VIDEO else ""
     joined = "\n\n".join(f"- {s}" for s in article_summaries[:10])
     system = (
-        f"You write short, factual news headlines in {lang}. "
-        "Reply with ONLY a valid JSON object."
+        f"You write short, factual news headlines in {lang}. Reply with ONLY a valid JSON object."
     )
     user = f"""These summaries describe the same news story:
 
 {joined}
-
-Write one short headline (max 12 words) in {lang} capturing the story.
+{guidance}
+Write one short headline ({_headline_words()}) in {lang} capturing the story.
 
 Reply with JSON: {{"headline": "..."}}"""
     return system, user
@@ -95,17 +168,19 @@ Reply with JSON: {{"new_facts": true|false, "added": "short description or empty
     return system, user
 
 
-def merge_story_summary(old_summary: str, new_article_summary: str) -> tuple[str, str]:
+def merge_story_summary(
+    old_summary: str, new_article_summary: str, lang_code: str | None = None
+) -> tuple[str, str]:
     """Merge a new article's facts into a story; also refresh the headline."""
-    lang = summary_language_name()
+    lang = summary_language_name(lang_code)
     system = (
         f"You merge news summaries into a single coherent summary in {lang}. "
         "Reply with ONLY a valid JSON object."
     )
     user = f"""Merge the new information into the existing story summary. Keep it concise
-(3-5 sentences), factual, in {lang}. Drop redundant wording.
+({_summary_sentences()}), factual, in {lang}. Drop redundant wording.
 
-Also write one short headline (max 12 words) in {lang} capturing the updated story.
+Also write one short headline ({_headline_words()}) in {lang} capturing the updated story.
 
 Existing story summary:
 {old_summary}
@@ -209,8 +284,7 @@ def newsletter_extract(
     invariant 2).
     """
     lines = "\n".join(
-        f"- URL: {url}\n  anchor: {anchor}\n  context: {context}"
-        for url, anchor, context in items
+        f"- URL: {url}\n  anchor: {anchor}\n  context: {context}" for url, anchor, context in items
     )
     system = (
         "You curate article links from email newsletters for a personal news reader. "
@@ -253,9 +327,7 @@ def chat_answer(
     )
     blocks = []
     for sid, title, summary, category, updated in stories:
-        blocks.append(
-            f"[Story {sid}] ({category}, updated {updated})\n{title}\n{summary}"
-        )
+        blocks.append(f"[Story {sid}] ({category}, updated {updated})\n{title}\n{summary}")
     context = "\n\n".join(blocks)
     user = f"""Answer the user's question in {lang}, using only these stories retrieved
 from the user's news archive (2-6 sentences, factual, no opinion). Cite every story
@@ -267,4 +339,57 @@ Stories:
 {context}
 
 Question: {question}"""
+    return system, user
+
+
+
+def discovery_translate_term(term: str, lang_code: str) -> tuple[str, str]:
+    """Translate one search term into the language of a news edition. Returns (system, user)."""
+    lang = summary_language_name(lang_code)
+    system = "You translate news search terms. Reply with ONLY a valid JSON object."
+    user = (
+        f"Translate this news search term into {lang}. Keep it short (1-3 words) and keep "
+        f"proper nouns unchanged.\nTerm: {term}\n"
+        'Reply with JSON: {"term": "..."}'
+    )
+    return system, user
+
+
+def discovery_suggest_feeds(
+    request: str, lang_code: str | None, country: str | None
+) -> tuple[str, str]:
+    """Ask for real publications covering a request. Returns (system, user)."""
+    lang = summary_language_name(lang_code)
+    where = f" The reader is in {country}." if country else ""
+    system = (
+        "You help a reader find news publications that have an RSS/Atom feed. "
+        "Only name publications you are confident really exist. Reply with ONLY a valid "
+        "JSON object."
+    )
+    user = f"""The reader is looking for: {request}
+They read {lang}.{where}
+List up to 10 real publications or websites that regularly publish about this, preferably in
+{lang}. For each give its name, its website home page, and its feed URL only if you are sure.
+
+Reply with JSON:
+{{"suggestions": [
+  {{"name": "...", "website": "https://...", "feed_url": "https://... or empty"}}
+]}}"""
+    return system, user
+
+
+def discovery_topic_check(
+    terms: list[str], title: str, description: str, headlines: list[str]
+) -> tuple[str, str]:
+    """Does a feed cover the requested topic? Returns (system, user)."""
+    system = "You judge whether a news feed fits a topic. Reply with ONLY a valid JSON object."
+    shown = "\n".join(f"- {h}" for h in headlines[:6]) or "- (none)"
+    user = f"""Requested topic: {", ".join(terms)}
+Feed: {title}
+Description: {description or "none"}
+Recent headlines:
+{shown}
+
+Does this feed regularly publish about the requested topic? Reply with JSON: {{"covers": true}}
+or {{"covers": false}}"""
     return system, user
