@@ -21,7 +21,7 @@
 
 <main class="center">
   <form class="card auth" onsubmit={submit}>
-    <h1>Welcome to NewsGator</h1>
+    <h1>Welcome to Sift</h1>
     <p>Create the admin account to get started.</p>
     {#if error}<p class="error">{error}</p>{/if}
     <label>Username <input bind:value={username} required minlength="3" /></label>

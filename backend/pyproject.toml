@@ -1,7 +1,7 @@
 [project]
 name = "newsgator-backend"
-version = "0.1.0"
-description = "NewsGator backend — self-hosted AI news clustering reader"
+dynamic = ["version"]
+description = "Sift backend — customized NewsGator news reader"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
@@ -46,6 +46,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { file = "src/app/SIFT_VERSION" }
+
+[tool.setuptools.package-data]
+app = ["SIFT_VERSION", "NEWSGATOR_UPSTREAM_VERSION"]
 
 [tool.ruff]
 target-version = "py312"

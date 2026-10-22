@@ -20,7 +20,21 @@ async def _seed_categories() -> None:
 async def test_health(client: AsyncClient) -> None:
     r = await client.get("/api/health")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    body = r.json()
+    assert body["status"] == "ok"
+    # Keep the established field while extending the response additively.
+    assert body["version"] == "0.1.0"
+    assert body["sift_version"] == "0.1.0"
+    assert body["upstream_name"] == "NewsGator"
+    assert body["upstream_version"] == "1.6.0"
+    assert body["build_commit"] == "unknown"
+
+
+async def test_health_reports_build_commit(client: AsyncClient, monkeypatch) -> None:
+    monkeypatch.setenv("BUILD_COMMIT", "a1b2c3d4e5f6")
+    r = await client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["build_commit"] == "a1b2c3d4e5f6"
 
 
 async def test_categories_crud(client: AsyncClient) -> None:

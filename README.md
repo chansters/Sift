@@ -1,4 +1,11 @@
-# NewsGator
+# Sift
+
+Sift is a customized fork of the open-source [NewsGator](https://github.com/Tekka90/NewsGator)
+project. It retains the upstream application and adds local customizations.
+
+Current Sift version: `0.1.0`
+
+Integrated upstream NewsGator version: `1.6.0`
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

@@ -497,7 +497,7 @@ async def export_opml(
     return Response(
         content=xml,
         media_type="text/x-opml",
-        headers={"Content-Disposition": 'attachment; filename="newsgator-subscriptions.opml"'},
+        headers={"Content-Disposition": 'attachment; filename="sift-subscriptions.opml"'},
     )
 
 

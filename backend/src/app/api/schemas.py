@@ -292,3 +292,7 @@ class CategorySuggestionAction(BaseModel):
 class HealthOut(BaseModel):
     status: str
     version: str
+    sift_version: str
+    upstream_name: str
+    upstream_version: str
+    build_commit: str

@@ -113,7 +113,7 @@
   });
 </script>
 
-<svelte:head><title>Usage — NewsGator</title></svelte:head>
+<svelte:head><title>Usage — Sift</title></svelte:head>
 
 {#if !$currentUser?.is_admin}
   <p class="muted">Admin only.</p>

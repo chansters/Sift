@@ -71,7 +71,7 @@ def render_rss(items: list[FeedItem], *, channel_title: str, self_url: str) -> s
     channel = SubElement(rss, "channel")
     SubElement(channel, "title").text = channel_title
     SubElement(channel, "link").text = self_url
-    SubElement(channel, "description").text = "NewsGator clustered stories"
+    SubElement(channel, "description").text = "Sift clustered stories"
     SubElement(
         channel,
         f"{{{ATOM_NS}}}link",
@@ -125,7 +125,7 @@ async def story_feed(
         ).all()
     )
     if not user_feed_ids:
-        xml = render_rss([], channel_title="NewsGator — Stories", self_url=str(request.url))
+        xml = render_rss([], channel_title="Sift — Stories", self_url=str(request.url))
         return Response(content=xml, media_type="application/rss+xml; charset=utf-8")
 
     user_story_ids = set(
@@ -139,7 +139,7 @@ async def story_feed(
         ).all()
     )
     if not user_story_ids:
-        xml = render_rss([], channel_title="NewsGator — Stories", self_url=str(request.url))
+        xml = render_rss([], channel_title="Sift — Stories", self_url=str(request.url))
         return Response(content=xml, media_type="application/rss+xml; charset=utf-8")
 
     stories = (
@@ -227,7 +227,7 @@ async def story_feed(
             )
         )
 
-    title = "NewsGator" + (f" — {category}" if category else "")
+    title = "Sift" + (f" — {category}" if category else "")
     self_url = str(request.url)
     xml = render_rss(items, channel_title=title, self_url=self_url)
     return Response(content=xml, media_type="application/rss+xml")

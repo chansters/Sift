@@ -35,6 +35,12 @@
     candidates: { tau: number; precision: number; recall: number; f1: number }[];
     suggested_tau_attach: number | null;
   } | null>(null);
+  let buildInfo = $state<{
+    sift_version: string;
+    upstream_name: string;
+    upstream_version: string;
+    build_commit: string;
+  } | null>(null);
 
   // Story RSS feed: per-user, tokenized URL the user pastes into a reader.
   // The token is fetched fresh from the backend on mount — localStorage may be
@@ -415,6 +421,11 @@
   ];
 
   onMount(async () => {
+    try {
+      buildInfo = await api.health();
+    } catch {
+      /* Keep the settings panel usable if version metadata is unavailable. */
+    }
     language = $currentUser?.summary_language ?? '';
     const interests = await api.categoryInterests.get();
     categoryInterests = interests.category_interests;
@@ -1014,6 +1025,25 @@
     {/if}
   </div>
 {/if}
+
+<div class="card">
+  <h2>About Sift</h2>
+  {#if buildInfo}
+    <p>Sift version: <strong>{buildInfo.sift_version}</strong></p>
+    <p>
+      Based on: <a href="https://github.com/Tekka90/NewsGator" target="_blank" rel="noreferrer">
+        {buildInfo.upstream_name}
+      </a>
+    </p>
+    <p>Upstream NewsGator version: <strong>{buildInfo.upstream_version}</strong></p>
+    <p>Build commit: <code>{buildInfo.build_commit}</code></p>
+    <p class="hint">
+      Sift is a customized fork of the open-source NewsGator project.
+    </p>
+  {:else}
+    <p class="hint">Version information is unavailable.</p>
+  {/if}
+</div>
 
 <style>
   h2 { margin-top: 0; font-size: 1.05rem; }

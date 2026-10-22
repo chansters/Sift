@@ -56,7 +56,7 @@ def render_opml(feeds: list[Feed]) -> str:
 
     root = ET.Element("opml", version="2.0")
     head = ET.SubElement(root, "head")
-    ET.SubElement(head, "title").text = "NewsGator subscriptions"
+    ET.SubElement(head, "title").text = "Sift subscriptions"
     body = ET.SubElement(root, "body")
     for feed in feeds:
         if feed.kind != "rss":

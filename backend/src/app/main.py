@@ -28,6 +28,7 @@ from app.api import settings as settings_api
 from app.core.config import settings
 from app.core.db import get_engine, get_session, init_engine
 from app.models import SEED_CATEGORIES, Category
+from app.version_metadata import get_version_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="NewsGator", version="0.1.0", lifespan=lifespan)
+    metadata = get_version_metadata()
+    app = FastAPI(title="Sift", version=metadata["sift_version"], lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173"],  # SvelteKit dev server

@@ -111,6 +111,14 @@ export type DiscoveryEvent =
   | { type: 'error'; message: string };
 
 export const api = {
+  health: () => req<{
+    status: string;
+    version: string;
+    sift_version: string;
+    upstream_name: string;
+    upstream_version: string;
+    build_commit: string;
+  }>('/health'),
   setupNeeded: () => req<{ setup_needed: boolean }>('/auth/setup-needed'),
   setup: async (username: string, password: string) => {
     const u = await req<AuthUser>('/auth/setup', { method: 'POST', body: { username, password } });

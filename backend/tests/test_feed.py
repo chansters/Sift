@@ -124,7 +124,7 @@ async def test_feed_renders_stories(client: AsyncClient, db_session) -> None:
     root = fromstring(r.text)
     channel = root.find("channel")
     assert channel is not None
-    assert channel.findtext("title") == "NewsGator"
+    assert channel.findtext("title") == "Sift"
     assert channel.find(f"{ATOM}link").get("rel") == "self"
 
     items = _items(r.text)

@@ -56,7 +56,7 @@
 
 <main class="center">
   <form class="card auth" onsubmit={submit}>
-    <h1>NewsGator — Sign in</h1>
+    <h1>Sift — Sign in</h1>
     {#if error}<p class="error">{error}</p>{/if}
     <label>Username <input bind:value={username} required autocomplete="username" /></label>
     <label>

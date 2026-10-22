@@ -66,7 +66,7 @@
   }
 </script>
 
-<svelte:head><title>NewsGator</title></svelte:head>
+<svelte:head><title>Sift</title></svelte:head>
 
 {#if !ready}
   <main class="center"><p>Loading…</p></main>
@@ -75,7 +75,7 @@
 {:else}
   <div class="shell">
     <nav bind:this={navEl}>
-      <strong class="brand">NewsGator</strong>
+      <strong class="brand">Sift</strong>
       <a href="/" class:active={page.url.pathname === '/'}>Stories</a>
       <a href="/chat" class:active={page.url.pathname.startsWith('/chat')}>Chat</a>
       <a href="/feeds" class:active={page.url.pathname.startsWith('/feeds')}>Feeds</a>

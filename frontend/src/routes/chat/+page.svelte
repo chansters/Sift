@@ -99,7 +99,7 @@
   }
 </script>
 
-<svelte:head><title>Chat · NewsGator</title></svelte:head>
+<svelte:head><title>Chat · Sift</title></svelte:head>
 
 <div class="chatwrap">
   <header class="chathead">

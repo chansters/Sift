@@ -9,13 +9,15 @@ from app.api.schemas import HealthOut
 from app.core.db import get_session
 from app.models import Article, Feed, Story, User
 from app.services.process import queue_depth
+from app.version_metadata import get_version_metadata
 
 router = APIRouter(tags=["ops"])
 
 
 @router.get("/health")
 async def health() -> HealthOut:
-    return HealthOut(status="ok", version="0.1.0")
+    metadata = get_version_metadata()
+    return HealthOut(status="ok", version=metadata["sift_version"], **metadata)
 
 
 @router.get("/stats")

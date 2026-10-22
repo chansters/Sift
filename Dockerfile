@@ -10,10 +10,13 @@ RUN npm run build
 
 # --- backend runtime ---
 FROM python:3.12-slim AS backend
+ARG BUILD_COMMIT=unknown
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DATABASE_URL=sqlite+aiosqlite:////data/newsgator.db \
-    NEWSGATOR_BACKEND_DIR=/app
+    NEWSGATOR_BACKEND_DIR=/app \
+    BUILD_COMMIT=${BUILD_COMMIT}
+LABEL org.opencontainers.image.revision=${BUILD_COMMIT}
 WORKDIR /app
 
 RUN pip install --no-cache-dir uv

@@ -15,7 +15,7 @@ from app.services import activity, youtube
 from app.services.ingest import canonicalize_url
 
 SAVED_FEED_PREFIX = "saved:"
-SAVED_FEED_TITLE = "Shared with NewsGator"
+SAVED_FEED_TITLE = "Shared with Sift"
 MAX_URL_LENGTH = 2048
 
 

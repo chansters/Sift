@@ -1,6 +1,6 @@
 {
-  "name": "NewsGator",
-  "short_name": "NewsGator",
+  "name": "Sift",
+  "short_name": "Sift",
   "description": "Self-hosted news reader — clustered stories with merged summaries",
   "start_url": "/",
   "scope": "/",
